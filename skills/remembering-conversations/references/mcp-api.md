@@ -2,6 +2,11 @@
 
 The episodic-memory plugin exposes two MCP tools for searching and displaying past conversations.
 
+## Contents
+
+- [search](#search) — semantic/text search over indexed conversations
+- [read](#read) — display a full conversation from a JSONL file
+
 ## search
 
 Search your episodic memory of past Claude Code conversations using semantic or text search.
@@ -130,7 +135,7 @@ Both tools return errors as text content with `isError: true`:
 ## Performance Notes
 
 - **Search** is fast (< 100ms typically)
-- **Show** can be slow for large conversations
+- **Read** can be slow for large conversations
   - Use `startLine`/`endLine` to paginate
   - Conversations can be 1000+ lines
 - Vector search uses sqlite-vec with cached embeddings

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.17] - 2026-04-29
+
+### Improved
+- **`remembering-conversations` skill**: Improved trigger coverage, body structure, and result-handling guidance
+  - Description now covers "familiar error from a past session" as a trigger
+  - Added "Using the Results" section: summarize findings, cite sources by project+date, handle empty results gracefully
+  - Added query formulation guidance: use specific terms (function names, error messages); multi-concept array search
+  - Moved MCP tools reference to `references/mcp-api.md` for progressive disclosure
+  - Frontmatter: description converted to double-quoted string, `argument-hint` and `allowed-tools` added
+  - Fixed MCP tool name: `__show` → `__read` (correct tool name per API)
+  - Fixed `subagent_type`: `"search-conversations"` → `"episodic-memory:search-conversations"`
+
 ## [1.0.16] - 2026-04-29
 
 ### Fixed
