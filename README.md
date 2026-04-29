@@ -2,6 +2,8 @@
 
 Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.
 
+> **Note:** This is a fork of [obra/episodic-memory](https://github.com/obra/episodic-memory) with additional features and fixes.
+
 ## Testimonial
 
 From an AI coding assistant's perspective:
