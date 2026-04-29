@@ -62,17 +62,18 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
     const filesToIndex = [];
     const filesToSummarize = [];
     // Walk source directory
-    const projects = fs.readdirSync(sourceDir);
+    const projectEntries = fs.readdirSync(sourceDir, { withFileTypes: true });
     const excludedProjects = getExcludedProjects();
-    for (const project of projects) {
+    for (const projectEntry of projectEntries) {
+        // Dirent.isDirectory() does not follow symlinks — worktree symlinks are skipped automatically
+        if (!projectEntry.isDirectory())
+            continue;
+        const project = projectEntry.name;
         if (excludedProjects.includes(project)) {
             console.log("\nSkipping excluded project: " + project);
             continue;
         }
         const projectPath = path.join(sourceDir, project);
-        const stat = fs.statSync(projectPath);
-        if (!stat.isDirectory())
-            continue;
         const files = findJsonlFiles(projectPath);
         for (const file of files) {
             const srcFile = path.join(projectPath, file);

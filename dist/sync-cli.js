@@ -4,7 +4,7 @@ import { spawn } from 'child_process';
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-Usage: episodic-memory sync [--background]
+Usage: episodic-memory sync [--background] [--limit <n>]
 
 Sync conversations from ~/.claude/projects to archive and index them.
 
@@ -18,6 +18,7 @@ Safe to run multiple times - subsequent runs are fast no-ops.
 
 OPTIONS:
   --background    Run sync in background (for hooks, returns immediately)
+  --limit <n>     Max summaries to generate per run (default: 10)
 
 EXAMPLES:
   # Sync all new conversations
@@ -25,6 +26,9 @@ EXAMPLES:
 
   # Sync in background (for hooks)
   episodic-memory sync --background
+
+  # Sync and generate up to 50 summaries
+  episodic-memory sync --limit 50
 
   # Use in Claude Code hook
   # In .claude/hooks/session-end:
@@ -34,6 +38,10 @@ EXAMPLES:
 }
 // Check if running in background mode
 const isBackground = args.includes('--background');
+// Parse --limit <n>
+const limitIdx = args.indexOf('--limit');
+const limitRaw = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : NaN;
+const summaryLimit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10;
 // If background mode, fork the process and exit immediately
 if (isBackground) {
     const filteredArgs = args.filter(arg => arg !== '--background');
@@ -65,7 +73,7 @@ console.log(`Destination: ${destDir}\n`);
 async function syncAll() {
     const totals = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [], sourcesWithSummaryWork: 0, totalNeedingSummaries: 0 };
     for (const sourceDir of sourceDirs) {
-        const result = await syncConversations(sourceDir, destDir);
+        const result = await syncConversations(sourceDir, destDir, { summaryLimit });
         totals.copied += result.copied;
         totals.skipped += result.skipped;
         totals.indexed += result.indexed;

@@ -19,18 +19,17 @@ export async function verifyIndex() {
     }
     // Initialize database once for all checks
     const db = initDatabase();
-    const projects = fs.readdirSync(archiveDir);
     const excludedProjects = getExcludedProjects();
     let totalChecked = 0;
-    for (const project of projects) {
+    for (const projectEntry of fs.readdirSync(archiveDir, { withFileTypes: true })) {
+        if (!projectEntry.isDirectory())
+            continue;
+        const project = projectEntry.name;
         if (excludedProjects.includes(project)) {
             console.log("\nSkipping excluded project: " + project);
             continue;
         }
         const projectPath = path.join(archiveDir, project);
-        const stat = fs.statSync(projectPath);
-        if (!stat.isDirectory())
-            continue;
         const files = findJsonlFiles(projectPath);
         for (const file of files) {
             totalChecked++;

@@ -1,19 +1,19 @@
 {
-  "name": "episodic-memory-dev",
-  "description": "Development marketplace for episodic memory plugin",
+  "name": "asherepenko-claude-marketplace",
+  "description": "Andrew Sherepenko's personal plugin marketplace",
   "owner": {
-    "name": "Jesse Vincent",
-    "email": "jesse@fsck.com"
+    "name": "Andrew Sherepenko",
+    "email": "andrew.sherepenko@gmail.com"
   },
   "plugins": [
     {
       "name": "episodic-memory",
       "description": "Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.",
-      "version": "1.0.15",
+      "version": "1.0.16",
       "source": "./",
       "author": {
-        "name": "Jesse Vincent",
-        "email": "jesse@fsck.com"
+        "name": "Andrew Sherepenko",
+        "email": "andrew.sherepenko@gmail.com"
       }
     }
   ]

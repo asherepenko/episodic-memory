@@ -48,8 +48,15 @@ _Conversation ID: 216ad284-c782-45a4-b2ce-36775cdb5a6c_
 The plugin provides MCP server integration, automatic session-end indexing, and seamless access to your conversation history.
 
 ```bash
-# In Claude Code
-/plugin install episodic-memory@superpowers-marketplace
+# Register the marketplace, then install
+/plugin marketplace add asherepenko/episodic-memory
+/plugin install episodic-memory@asherepenko-claude-marketplace
+```
+
+Or install directly from GitHub without registering the marketplace:
+
+```bash
+/plugin install github:asherepenko/episodic-memory
 ```
 
 The plugin automatically:
@@ -57,11 +64,24 @@ The plugin automatically:
 - Exposes MCP tools for searching and viewing conversations
 - Makes your conversation history searchable via natural language
 
-### As an npm package
+#### Manual plugin install (alternative)
+
+If the `/plugin install` command is unavailable, clone and link manually:
 
 ```bash
-npm install -g github:obra/episodic-memory
+# Clone the repo
+git clone https://github.com/asherepenko/episodic-memory.git
+cd episodic-memory
+npm install && npm run build
+
+# Install globally so the CLI is on PATH
+npm install -g .
+
+# Register the plugin with Claude Code
+# Point CLAUDE_PLUGIN_ROOT to the cloned directory, then in Claude Code:
+/plugin install /path/to/episodic-memory
 ```
+
 
 ## Usage
 
@@ -152,7 +172,7 @@ These settings only affect episodic-memory's summarization calls, not your inter
 
 | Component | Uses custom config? |
 |-----------|---------------------|
-| Summarization | Yes (up to 10 calls/sync) |
+| Summarization | Yes (up to `--limit` calls/sync, default 10) |
 | Embeddings | No (local Transformers.js) |
 | Search | No (local SQLite) |
 | MCP tools | No |
@@ -169,11 +189,27 @@ Features:
 - Atomic operations - safe to run concurrently
 - Idempotent - safe to call repeatedly
 
+**Options:**
+- `--background` — fork and return immediately (use in hooks)
+- `--limit <n>` — max summaries to generate per run (default: `10`)
+
+**Examples:**
+```bash
+# Sync all new conversations (up to 10 summaries)
+episodic-memory sync
+
+# Generate more summaries in one pass
+episodic-memory sync --limit 50
+
+# Background mode for hooks
+episodic-memory sync --background
+```
+
 **Usage in Claude Code:**
 Add to `.claude/hooks/session-end`:
 ```bash
 #!/bin/bash
-episodic-memory sync
+episodic-memory sync --background
 ```
 
 ### `episodic-memory stats`

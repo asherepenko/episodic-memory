@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.16] - 2026-04-29
+
+### Fixed
+- **Worktree symlinks crash or double-index sync**: All directory walkers (`sync`, `indexer`, `verify`, `index-cli`) now use `readdirSync({ withFileTypes: true })` + `Dirent.isDirectory()` instead of `statSync`
+  - `Dirent.isDirectory()` never follows symlinks, so broken worktree symlinks no longer crash background sync silently
+  - Valid worktree symlinks (pointing to another project dir) are skipped instead of being indexed twice under a different project name
+
+### Added
+- **`--limit <n>` flag for `sync` command**: Control how many summaries are generated per sync run (default: 10)
+  - Example: `episodic-memory sync --limit 50`
+  - Correctly forwarded when combined with `--background`
+
 ## [1.0.15] - 2025-12-17
 
 ### Changed

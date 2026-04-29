@@ -76,11 +76,11 @@ async function main() {
                 // Delete all summary files
                 const archiveDir = getArchiveDir();
                 if (fs.existsSync(archiveDir)) {
-                    const projects = fs.readdirSync(archiveDir);
-                    for (const project of projects) {
-                        const projectPath = path.join(archiveDir, project);
-                        if (!fs.statSync(projectPath).isDirectory())
+                    for (const projectEntry of fs.readdirSync(archiveDir, { withFileTypes: true })) {
+                        if (!projectEntry.isDirectory())
                             continue;
+                        const project = projectEntry.name;
+                        const projectPath = path.join(archiveDir, project);
                         const summaries = fs.readdirSync(projectPath).filter(f => f.endsWith('-summary.txt'));
                         for (const summary of summaries) {
                             fs.unlinkSync(path.join(projectPath, summary));

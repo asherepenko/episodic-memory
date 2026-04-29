@@ -35,8 +35,10 @@ export async function indexConversations(limitToProject, maxConversations, concu
     let conversationsProcessed = 0;
     const excludedProjects = getExcludedProjects();
     for (const sourceDir of sourceDirs) {
-        const projects = fs.readdirSync(sourceDir);
-        for (const project of projects) {
+        for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+            if (!projectEntry.isDirectory())
+                continue;
+            const project = projectEntry.name;
             // Skip excluded projects
             if (excludedProjects.includes(project)) {
                 console.log(`\nSkipping excluded project: ${project}`);
@@ -46,9 +48,6 @@ export async function indexConversations(limitToProject, maxConversations, concu
             if (limitToProject && project !== limitToProject)
                 continue;
             const projectPath = path.join(sourceDir, project);
-            const stat = fs.statSync(projectPath);
-            if (!stat.isDirectory())
-                continue;
             const files = findJsonlFiles(projectPath);
             if (files.length === 0)
                 continue;
@@ -135,13 +134,13 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
     const excludedProjects = getExcludedProjects();
     let found = false;
     for (const sourceDir of sourceDirs) {
-        const projects = fs.readdirSync(sourceDir);
-        for (const project of projects) {
+        for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+            if (!projectEntry.isDirectory())
+                continue;
+            const project = projectEntry.name;
             if (excludedProjects.includes(project))
                 continue;
             const projectPath = path.join(sourceDir, project);
-            if (!fs.statSync(projectPath).isDirectory())
-                continue;
             const files = findJsonlFiles(projectPath).filter(f => f.includes(sessionId));
             if (files.length > 0) {
                 found = true;
@@ -201,13 +200,13 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
     const unprocessed = [];
     // Collect all unprocessed conversations from all source dirs
     for (const sourceDir of sourceDirs) {
-        const projects = fs.readdirSync(sourceDir);
-        for (const project of projects) {
+        for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+            if (!projectEntry.isDirectory())
+                continue;
+            const project = projectEntry.name;
             if (excludedProjects.includes(project))
                 continue;
             const projectPath = path.join(sourceDir, project);
-            if (!fs.statSync(projectPath).isDirectory())
-                continue;
             const files = findJsonlFiles(projectPath);
             for (const file of files) {
                 const sourcePath = path.join(projectPath, file);
