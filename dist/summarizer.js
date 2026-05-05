@@ -1,7 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
 import { log } from './logger.js';
-import { loadPartial, savePartial, clearPartial } from './partial.js';
 const DEFAULT_CALL_TIMEOUT_MS = 180_000; // 3 min per Claude SDK call
 function getCallTimeoutMs() {
     const raw = process.env.EPISODIC_MEMORY_API_TIMEOUT_MS;
@@ -405,7 +404,7 @@ class HierarchicalSession {
 export async function summarizeConversation(exchanges, optsOrSessionId) {
     // Back-compat: callers may pass sessionId positionally.
     const opts = typeof optsOrSessionId === 'string' ? { sessionId: optsOrSessionId } : (optsOrSessionId ?? {});
-    const { sessionId, partialPath } = opts;
+    const { sessionId } = opts;
     // Fast pre-filter: skip SDK call entirely for trivial conversations
     const trivial = detectTrivial(exchanges);
     if (trivial !== null) {
@@ -429,10 +428,10 @@ export async function summarizeConversation(exchanges, optsOrSessionId) {
     log.info(`  Long conversation (${exchanges.length} exchanges) - using hierarchical summarization`);
     const chunks = chunkExchanges(exchanges, 8);
     log.info(`  Split into ${chunks.length} chunks`);
-    // Resume from partial state if available
-    const chunkSummaries = partialPath
-        ? loadPartial(partialPath, chunks.length, exchanges.length)
-        : [];
+    // Discard cached chunks that exceed current chunk count — chunkSize change or
+    // shrunk conversation invalidates resumption.
+    const initial = opts.initialChunkSummaries ?? [];
+    const chunkSummaries = initial.length <= chunks.length ? [...initial] : [];
     if (chunkSummaries.length > 0) {
         log.info(`  Resuming from partial state: ${chunkSummaries.length}/${chunks.length} chunks already done`);
     }
@@ -447,16 +446,14 @@ export async function summarizeConversation(exchanges, optsOrSessionId) {
                 const extracted = extractSummary(summary);
                 chunkSummaries.push(extracted);
                 log.info(`  Chunk ${i + 1}/${chunks.length}: ${extracted.split(/\s+/).length} words`);
-                if (partialPath) {
-                    savePartial(partialPath, chunks.length, chunkSummaries, exchanges.length);
-                }
+                opts.onChunkComplete?.(chunkSummaries, chunks.length, exchanges.length);
             }
             catch (error) {
                 const msg = error instanceof Error ? error.message : String(error);
                 log.warn(`  Chunk ${i + 1} failed: ${msg}`);
                 // Persist what we have so a retry can pick up after this index.
-                if (partialPath && chunkSummaries.length > 0) {
-                    savePartial(partialPath, chunks.length, chunkSummaries, exchanges.length);
+                if (chunkSummaries.length > 0) {
+                    opts.onChunkComplete?.(chunkSummaries, chunks.length, exchanges.length);
                 }
                 // Re-throw so caller (sync.ts) marks file as failed and retry-state ticks.
                 throw error;
@@ -470,10 +467,7 @@ export async function summarizeConversation(exchanges, optsOrSessionId) {
         log.info(`  Synthesizing final summary...`);
         try {
             const result = await session.send(synthesisPrompt);
-            const final = extractSummary(result);
-            if (partialPath)
-                clearPartial(partialPath);
-            return final;
+            return extractSummary(result);
         }
         catch (error) {
             const msg = error instanceof Error ? error.message : String(error);

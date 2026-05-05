@@ -13,7 +13,9 @@ export declare function formatConversationText(exchanges: ConversationExchange[]
 export declare function detectTrivial(exchanges: ConversationExchange[]): string | null;
 export interface SummarizeOptions {
     sessionId?: string;
-    /** Path to *-summary.partial.json for resumable hierarchical chunking (#3). */
-    partialPath?: string;
+    /** Pre-existing chunk summaries (resumption from a previous run). */
+    initialChunkSummaries?: string[];
+    /** Called after each chunk completes; caller persists. */
+    onChunkComplete?: (chunkSummaries: string[], totalChunks: number, totalExchanges: number) => void;
 }
 export declare function summarizeConversation(exchanges: ConversationExchange[], optsOrSessionId?: string | SummarizeOptions): Promise<string>;
