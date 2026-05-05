@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - Upstream merge from obra/episodic-memory
+## [1.2.2] - 2026-05-05
 
-### Merged from upstream
+### Merged from upstream (obra/episodic-memory)
 - **bge-small-en-v1.5 encoder + auto-migration** (upstream 1.2.0): replaces `all-MiniLM-L6-v2`. Top-1 retrieval accuracy 47% → 53%, top-10 68% → 75%. Existing indexes auto-migrate in batches behind a lock; tunable via `EPISODIC_MEMORY_MIGRATION_BATCH`. New `exchanges.embedding_version` column tracks per-row encoder version. Switches from `@xenova/transformers` to `@huggingface/transformers`. Resolves upstream #82.
 - **Search metadata filters** (upstream #63): `--project`, `--session-id`, `--git-branch` flags on CLI and MCP; bound parameters replace string interpolation for time filters.
 - **`exclude.txt` nested directory matching** (upstream #80): adding `subagents` now also skips `<project>/<session>/subagents/agent-*.jsonl`.
@@ -112,7 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Upstream release history (obra/episodic-memory)
 
-The fork-version numbers above (1.1.x, 1.2.x) reuse the same major.minor as upstream but carry different content. Upstream's own release notes are preserved below for reference; their fixes have been merged into this fork as noted in the **Unreleased — Upstream merge** section at the top.
+The fork-version numbers above (1.1.x, 1.2.x) reuse the same major.minor as upstream but carry different content. Upstream's own release notes are preserved below for reference; their fixes have been merged into this fork as noted in the **1.2.2 — Merged from upstream** section at the top.
 
 ## Upstream [1.2.0] - 2026-05-03
 

@@ -1,6 +1,6 @@
 {
   "name": "episodic-memory",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.",
   "author": {
     "name": "Andrew Sherepenko",
@@ -9,12 +9,22 @@
   "homepage": "https://github.com/asherepenko/episodic-memory",
   "repository": "https://github.com/asherepenko/episodic-memory",
   "license": "MIT",
-  "keywords": ["memory", "search", "conversations", "semantic-search", "episodic"],
-  "agents": ["./agents/search-conversations.md"],
+  "keywords": [
+    "memory",
+    "search",
+    "conversations",
+    "semantic-search",
+    "episodic"
+  ],
+  "agents": [
+    "./agents/search-conversations.md"
+  ],
   "mcpServers": {
     "episodic-memory": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli/mcp-server-wrapper.js"],
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/cli/mcp-server-wrapper.js"
+      ],
       "env": {}
     }
   }
