@@ -34,62 +34,72 @@ function isKnownKind(kind) {
         kind === 'stale' ||
         kind === 'poison');
 }
-function parseSidecar(jsonlPath) {
+// Distinguish "no sidecar on disk" from "sidecar exists but unreadable".
+// Missing → migrate from legacy artifacts. Invalid → return pending without
+// migration so we neither overwrite the broken bytes (diagnostic value) nor
+// re-migrate a conversation the user has already touched.
+function readSidecar(jsonlPath) {
     let raw;
     try {
         raw = fs.readFileSync(sidecarPathFor(jsonlPath), 'utf-8');
     }
     catch {
-        return null;
+        return { kind: 'missing' };
     }
     let parsed;
     try {
         parsed = JSON.parse(raw);
     }
     catch {
-        return null;
+        return { kind: 'invalid' };
     }
     if (!parsed || typeof parsed !== 'object')
-        return null;
+        return { kind: 'invalid' };
     const obj = parsed;
     if (obj.version !== SCHEMA_VERSION)
-        return null;
+        return { kind: 'invalid' };
     if (!isKnownKind(obj.kind))
-        return null;
+        return { kind: 'invalid' };
     switch (obj.kind) {
         case 'pending':
-            return { kind: 'pending' };
+            return { kind: 'valid', state: { kind: 'pending' } };
         case 'inProgress':
             if (!Array.isArray(obj.chunkSummaries) ||
                 typeof obj.totalChunks !== 'number' ||
                 typeof obj.totalExchanges !== 'number' ||
                 typeof obj.lastUpdated !== 'string')
-                return null;
+                return { kind: 'invalid' };
             return {
-                kind: 'inProgress',
-                chunkSummaries: obj.chunkSummaries,
-                totalChunks: obj.totalChunks,
-                totalExchanges: obj.totalExchanges,
-                lastUpdated: obj.lastUpdated,
+                kind: 'valid',
+                state: {
+                    kind: 'inProgress',
+                    chunkSummaries: obj.chunkSummaries,
+                    totalChunks: obj.totalChunks,
+                    totalExchanges: obj.totalExchanges,
+                    lastUpdated: obj.lastUpdated,
+                },
             };
         case 'complete':
             if (typeof obj.lastUpdated !== 'string')
-                return null;
-            return { kind: 'complete', lastUpdated: obj.lastUpdated };
+                return { kind: 'invalid' };
+            return { kind: 'valid', state: { kind: 'complete', lastUpdated: obj.lastUpdated } };
         case 'stale':
             if (typeof obj.lastUpdated !== 'string')
-                return null;
-            return { kind: 'stale', lastUpdated: obj.lastUpdated };
+                return { kind: 'invalid' };
+            return { kind: 'valid', state: { kind: 'stale', lastUpdated: obj.lastUpdated } };
         case 'poison':
             if (typeof obj.attempts !== 'number' ||
                 typeof obj.lastError !== 'string' ||
                 typeof obj.lastAttempt !== 'string')
-                return null;
+                return { kind: 'invalid' };
             return {
-                kind: 'poison',
-                attempts: obj.attempts,
-                lastError: obj.lastError,
-                lastAttempt: obj.lastAttempt,
+                kind: 'valid',
+                state: {
+                    kind: 'poison',
+                    attempts: obj.attempts,
+                    lastError: obj.lastError,
+                    lastAttempt: obj.lastAttempt,
+                },
             };
     }
 }
@@ -152,15 +162,29 @@ function readLegacyPartial(jsonlPath) {
     return null;
 }
 function readLegacySummary(jsonlPath) {
+    let summaryStat;
     try {
-        const stat = fs.lstatSync(legacySummaryPathFor(jsonlPath));
-        return { kind: 'complete', lastUpdated: stat.mtime.toISOString() };
+        summaryStat = fs.lstatSync(legacySummaryPathFor(jsonlPath));
     }
     catch {
         return null;
     }
+    // If the source jsonl outpaces the summary, the summary is stale. When we
+    // can't stat the jsonl (degenerate case), fall back to complete.
+    let jsonlStat = null;
+    try {
+        jsonlStat = fs.lstatSync(jsonlPath);
+    }
+    catch {
+        jsonlStat = null;
+    }
+    const lastUpdated = summaryStat.mtime.toISOString();
+    if (jsonlStat && jsonlStat.mtime.getTime() > summaryStat.mtime.getTime()) {
+        return { kind: 'stale', lastUpdated };
+    }
+    return { kind: 'complete', lastUpdated };
 }
-function migrate(jsonlPath) {
+function migrate(jsonlPath, retryAll) {
     const fromPartial = readLegacyPartial(jsonlPath);
     if (fromPartial) {
         writeSidecar(jsonlPath, fromPartial);
@@ -168,6 +192,10 @@ function migrate(jsonlPath) {
     }
     const fromGlobal = readLegacyGlobalFailure(jsonlPath);
     if (fromGlobal) {
+        // RETRY_ALL skips sidecar write so the legacy global record stays
+        // authoritative for the next run when the env is unset.
+        if (retryAll)
+            return { kind: 'pending' };
         const poison = {
             kind: 'poison',
             attempts: fromGlobal.attempts,
@@ -208,15 +236,19 @@ function walkSidecars(dir, out) {
 export function openConversationSyncStateStore(opts) {
     const archiveDir = opts?.archiveDir ?? getArchiveDir();
     const load = (jsonlPath) => {
-        const fromSidecar = parseSidecar(jsonlPath);
-        if (fromSidecar) {
+        const retryAll = !!process.env.EPISODIC_MEMORY_RETRY_ALL;
+        const result = readSidecar(jsonlPath);
+        if (result.kind === 'valid') {
             // Honour retry-all by masking poison without rewriting the on-disk record.
-            if (process.env.EPISODIC_MEMORY_RETRY_ALL && fromSidecar.kind === 'poison') {
+            if (retryAll && result.state.kind === 'poison')
                 return { kind: 'pending' };
-            }
-            return fromSidecar;
+            return result.state;
         }
-        return migrate(jsonlPath);
+        // Invalid sidecar bytes: do NOT migrate (would clobber diagnostic info)
+        // and do NOT overwrite the file. Treat as Pending so the next sync retries.
+        if (result.kind === 'invalid')
+            return { kind: 'pending' };
+        return migrate(jsonlPath, retryAll);
     };
     const save = (jsonlPath, next) => {
         writeSidecar(jsonlPath, next);
@@ -234,8 +266,10 @@ export function openConversationSyncStateStore(opts) {
         return next;
     };
     const clearFailure = (jsonlPath) => {
-        const current = parseSidecar(jsonlPath);
-        if (current?.kind === 'poison') {
+        // Only act on a confirmed-poison sidecar — invalid sidecars are left in
+        // place for diagnosis; missing sidecars have nothing to clear.
+        const result = readSidecar(jsonlPath);
+        if (result.kind === 'valid' && result.state.kind === 'poison') {
             try {
                 fs.unlinkSync(sidecarPathFor(jsonlPath));
             }

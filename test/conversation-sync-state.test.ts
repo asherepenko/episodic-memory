@@ -363,6 +363,158 @@ describe('conversation-sync-state: lazy migration', () => {
   });
 });
 
+describe('conversation-sync-state: Codex hardening', () => {
+  // #1a: RETRY_ALL must NOT migrate legacy global poison into a sidecar —
+  // otherwise unsetting the env later still finds a poison record on disk.
+  it('RETRY_ALL bypasses legacy global poison without writing sidecar', () => {
+    const indexDir = path.join(tmpDir, 'conversation-index');
+    fs.mkdirSync(indexDir, { recursive: true });
+    const legacy = path.join(indexDir, 'sync-state.json');
+    const legacyBody = JSON.stringify({
+      failures: {
+        [jsonl]: {
+          attempts: MAX_ATTEMPTS,
+          lastError: 'rate-limit',
+          lastAttempt: '2026-05-05T01:00:00Z',
+        },
+      },
+    });
+    fs.writeFileSync(legacy, legacyBody);
+
+    process.env.EPISODIC_MEMORY_RETRY_ALL = '1';
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+
+    expect(state).toEqual({ kind: 'pending' });
+    expect(fs.existsSync(sidecarPathFor(jsonl))).toBe(false);
+    expect(fs.readFileSync(legacy, 'utf-8')).toBe(legacyBody);
+  });
+
+  // #1b: regression — without RETRY_ALL the legacy global poison still migrates.
+  it('without RETRY_ALL legacy global poison still migrates to sidecar', () => {
+    const indexDir = path.join(tmpDir, 'conversation-index');
+    fs.mkdirSync(indexDir, { recursive: true });
+    fs.writeFileSync(path.join(indexDir, 'sync-state.json'), JSON.stringify({
+      failures: {
+        [jsonl]: {
+          attempts: MAX_ATTEMPTS,
+          lastError: 'rate-limit',
+          lastAttempt: '2026-05-05T01:00:00Z',
+        },
+      },
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state.kind).toBe('poison');
+    expect(fs.existsSync(sidecarPathFor(jsonl))).toBe(true);
+  });
+
+  // #2a: corrupt JSON sidecar must NOT trigger migration nor overwrite the bad bytes.
+  it('corrupt sidecar yields pending without migration and preserves bytes', () => {
+    const sidecar = sidecarPathFor(jsonl);
+    const corrupt = '{garbage';
+    fs.writeFileSync(sidecar, corrupt);
+
+    // also write legacy partial — must NOT win since sidecar already exists (just invalid).
+    const partialPath = jsonl.replace(/\.jsonl$/, '-summary.partial.json');
+    fs.writeFileSync(partialPath, JSON.stringify({
+      version: 1,
+      totalChunks: 5,
+      chunkSummaries: ['c1'],
+      totalExchanges: 10,
+      lastUpdated: '2026-05-05T00:00:00Z',
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+    expect(fs.readFileSync(sidecar, 'utf-8')).toBe(corrupt);
+  });
+
+  // #2b: future-version sidecar — same rule as corrupt: pending, do not overwrite.
+  it('future-version sidecar yields pending without migration and preserves bytes', () => {
+    const sidecar = sidecarPathFor(jsonl);
+    const body = JSON.stringify({ version: 999, kind: 'complete', lastUpdated: 'x' });
+    fs.writeFileSync(sidecar, body);
+
+    const partialPath = jsonl.replace(/\.jsonl$/, '-summary.partial.json');
+    fs.writeFileSync(partialPath, JSON.stringify({
+      version: 1,
+      totalChunks: 5,
+      chunkSummaries: ['c1'],
+      totalExchanges: 10,
+      lastUpdated: '2026-05-05T00:00:00Z',
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+    expect(fs.readFileSync(sidecar, 'utf-8')).toBe(body);
+  });
+
+  // #2c: unknown kind — same rule.
+  it('unknown-kind sidecar yields pending without migration and preserves bytes', () => {
+    const sidecar = sidecarPathFor(jsonl);
+    const body = JSON.stringify({ version: 2, kind: 'whoknows', lastUpdated: 'x' });
+    fs.writeFileSync(sidecar, body);
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+    expect(fs.readFileSync(sidecar, 'utf-8')).toBe(body);
+  });
+
+  // #3a: legacy summary newer than jsonl → Complete.
+  it('legacy summary newer than jsonl migrates to complete', () => {
+    fs.writeFileSync(jsonl, 'orig');
+    const jsonlT = new Date('2026-04-04T00:00:00Z');
+    fs.utimesSync(jsonl, jsonlT, jsonlT);
+
+    const summaryPath = jsonl.replace(/\.jsonl$/, '-summary.txt');
+    fs.writeFileSync(summaryPath, 'a summary');
+    const summaryT = new Date('2026-04-04T00:05:00Z'); // 5min after jsonl
+    fs.utimesSync(summaryPath, summaryT, summaryT);
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state.kind).toBe('complete');
+    if (state.kind !== 'complete') throw new Error('unreachable');
+    expect(new Date(state.lastUpdated).toISOString()).toBe(summaryT.toISOString());
+  });
+
+  // #3b: jsonl newer than legacy summary → Stale (carries summary mtime).
+  it('jsonl newer than legacy summary migrates to stale', () => {
+    fs.writeFileSync(jsonl, 'orig');
+    const summaryPath = jsonl.replace(/\.jsonl$/, '-summary.txt');
+    fs.writeFileSync(summaryPath, 'old summary');
+
+    const summaryT = new Date('2026-04-04T00:00:00Z');
+    fs.utimesSync(summaryPath, summaryT, summaryT);
+    const jsonlT = new Date('2026-04-04T00:05:00Z'); // 5min after summary
+    fs.utimesSync(jsonl, jsonlT, jsonlT);
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state.kind).toBe('stale');
+    if (state.kind !== 'stale') throw new Error('unreachable');
+    // Stale carries the summary's last-known mtime, not the jsonl's.
+    expect(new Date(state.lastUpdated).toISOString()).toBe(summaryT.toISOString());
+  });
+
+  // #3c: legacy summary present but jsonl missing → fallback to complete.
+  it('legacy summary present but jsonl missing falls back to complete', () => {
+    const summaryPath = jsonl.replace(/\.jsonl$/, '-summary.txt');
+    fs.writeFileSync(summaryPath, 'a summary');
+    const summaryT = new Date('2026-04-04T00:00:00Z');
+    fs.utimesSync(summaryPath, summaryT, summaryT);
+    // Note: jsonl file intentionally NOT created.
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state.kind).toBe('complete');
+    if (state.kind !== 'complete') throw new Error('unreachable');
+    expect(new Date(state.lastUpdated).toISOString()).toBe(summaryT.toISOString());
+  });
+});
+
 describe('conversation-sync-state: countPoison', () => {
   it('counts only sidecars with kind=poison and attempts >= MAX_ATTEMPTS', () => {
     const a = path.join(archiveDir, 'p1', 'a.jsonl');
