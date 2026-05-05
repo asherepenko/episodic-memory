@@ -24,20 +24,31 @@ export class SummarizerTimeoutError extends Error {
  * - EPISODIC_MEMORY_API_TOKEN: Auth token for custom endpoint
  * - EPISODIC_MEMORY_API_TIMEOUT_MS: Timeout for API calls (default: SDK default)
  */
-function getApiEnv() {
+export function getApiEnv() {
     const baseUrl = process.env.EPISODIC_MEMORY_API_BASE_URL;
     const token = process.env.EPISODIC_MEMORY_API_TOKEN;
     const timeoutMs = process.env.EPISODIC_MEMORY_API_TIMEOUT_MS;
-    if (!baseUrl && !token && !timeoutMs) {
-        return undefined;
-    }
-    // Merge with process.env so subprocess inherits PATH, HOME, etc.
+    // Always include the reentrancy guard so the SDK-spawned Claude subprocess
+    // (which inherits this env) marks itself as a reentrant context. The
+    // SessionStart hook checks the guard via shouldSkipReentrantSync() and
+    // exits before launching another sync, breaking the recursive cascade
+    // reported in #87.
     return {
         ...process.env,
+        EPISODIC_MEMORY_SUMMARIZER_GUARD: '1',
         ...(baseUrl && { ANTHROPIC_BASE_URL: baseUrl }),
         ...(token && { ANTHROPIC_AUTH_TOKEN: token }),
         ...(timeoutMs && { API_TIMEOUT_MS: timeoutMs }),
     };
+}
+/**
+ * Detect whether the current process is running inside the Claude Agent SDK
+ * subprocess that the summarizer just spawned. The flag is set by getApiEnv()
+ * and inherited by the spawned subprocess. Used by sync entry points to bail
+ * out before re-entering the sync→summarizer→spawn cycle (#87).
+ */
+export function shouldSkipReentrantSync() {
+    return process.env.EPISODIC_MEMORY_SUMMARIZER_GUARD === '1';
 }
 export function formatConversationText(exchanges) {
     return exchanges.map(ex => {
@@ -51,6 +62,29 @@ function extractSummary(text) {
     }
     // Fallback if no tags found
     return text.trim();
+}
+/**
+ * Build the options object passed to the Claude Agent SDK's query() for a
+ * summarization call.
+ *
+ * persistSession: false keeps the SDK from writing its session transcript to
+ * ~/.claude/projects/ (#83). Without it, every summarization spawns a fake
+ * session JSONL that pollutes the IDE session sidebar. The option is honored
+ * by claude-agent-sdk >= 0.2.0.
+ */
+export function buildSummarizerQueryOptions(args) {
+    const { model, sessionId } = args;
+    return {
+        model,
+        max_tokens: 4096,
+        env: getApiEnv(),
+        resume: sessionId,
+        persistSession: false,
+        // Don't override systemPrompt when resuming — the resumed session's prompt stays in effect.
+        ...(sessionId ? {} : {
+            systemPrompt: 'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Your output will be indexed directly.'
+        }),
+    };
 }
 async function callClaude(prompt, sessionId, useFallback = false) {
     const primaryModel = process.env.EPISODIC_MEMORY_API_MODEL || 'haiku';

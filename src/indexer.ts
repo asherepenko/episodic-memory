@@ -56,6 +56,7 @@ export async function indexConversations(
   let conversationsProcessed = 0;
 
   const excludedProjects = getExcludedProjects();
+  const excludedDirSet = new Set(excludedProjects);
 
   for (const sourceDir of sourceDirs) {
   for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
@@ -72,7 +73,7 @@ export async function indexConversations(
     if (limitToProject && project !== limitToProject) continue;
     const projectPath = path.join(sourceDir, project);
 
-    const files = findJsonlFiles(projectPath);
+    const files = findJsonlFiles(projectPath, excludedDirSet);
 
     if (files.length === 0) continue;
 
@@ -184,6 +185,7 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
   const sourceDirs = getConversationSourceDirs();
   const ARCHIVE_DIR = getArchiveDir();
   const excludedProjects = getExcludedProjects();
+  const excludedDirSet = new Set(excludedProjects);
   let found = false;
 
   for (const sourceDir of sourceDirs) {
@@ -193,7 +195,7 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
     if (excludedProjects.includes(project)) continue;
 
     const projectPath = path.join(sourceDir, project);
-    const files = findJsonlFiles(projectPath).filter(f => f.includes(sessionId));
+    const files = findJsonlFiles(projectPath, excludedDirSet).filter(f => f.includes(sessionId));
 
     if (files.length > 0) {
       found = true;
@@ -264,6 +266,7 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
   const sourceDirs = getConversationSourceDirs();
   const ARCHIVE_DIR = getArchiveDir();
   const excludedProjects = getExcludedProjects();
+  const excludedDirSet = new Set(excludedProjects);
 
   type UnprocessedConv = {
     project: string;
@@ -285,7 +288,7 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
 
     const projectPath = path.join(sourceDir, project);
 
-    const files = findJsonlFiles(projectPath);
+    const files = findJsonlFiles(projectPath, excludedDirSet);
 
     for (const file of files) {
       const sourcePath = path.join(projectPath, file);
@@ -293,25 +296,29 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
       const archivePath = path.join(projectArchive, file);
       const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
 
-      // Check if already indexed in database
-      const alreadyIndexed = db.prepare('SELECT COUNT(*) as count FROM exchanges WHERE archive_path = ?')
-        .get(archivePath) as { count: number };
-
-      if (alreadyIndexed.count > 0) continue;
+      // High-water mark: index exchanges past the last line we've already covered.
+      // Transcript JSONLs are append-only, so MAX(line_end) tells us where to resume.
+      const hw = db.prepare(
+        'SELECT COALESCE(MAX(line_end), 0) as maxLine FROM exchanges WHERE archive_path = ?'
+      ).get(archivePath) as { maxLine: number };
+      const maxIndexedLine = hw.maxLine;
 
       // Ensure parent dirs exist for subagent files
       fs.mkdirSync(path.dirname(archivePath), { recursive: true });
 
-      // Archive if needed
-      if (!fs.existsSync(archivePath)) {
+      // Refresh the archive when the source may have grown beyond what we've seen.
+      if (!fs.existsSync(archivePath) || maxIndexedLine > 0) {
         fs.copyFileSync(sourcePath, archivePath);
       }
 
-      // Parse and check
+      // Parse and filter to exchanges past the high-water mark
       const exchanges = await parseConversation(sourcePath, project, archivePath);
-      if (exchanges.length === 0) continue;
+      const newExchanges = maxIndexedLine > 0
+        ? exchanges.filter(e => e.lineStart > maxIndexedLine)
+        : exchanges;
+      if (newExchanges.length === 0) continue;
 
-      unprocessed.push({ project, file, sourcePath, archivePath, summaryPath, exchanges });
+      unprocessed.push({ project, file, sourcePath, archivePath, summaryPath, exchanges: newExchanges });
     }
   }
   } // end sourceDir loop

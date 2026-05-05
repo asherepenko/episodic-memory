@@ -17,7 +17,8 @@ function runNpmInstall() {
         const npmCommand = isWindows ? 'npm.cmd' : 'npm';
         console.error('Installing episodic-memory dependencies (first run only)...');
         console.error('This may take 30-60 seconds...');
-        const child = spawn(npmCommand, ['install', '--prefer-offline', '--no-audit', '--no-fund'], {
+        // Install dependencies - npm will auto-install optionalDependencies for current platform
+        const child = spawn(npmCommand, ['install', '--no-audit', '--no-fund'], {
             cwd: PLUGIN_ROOT,
             stdio: ['ignore', 'pipe', 'pipe'],
             shell: isWindows,

@@ -99,6 +99,7 @@ export async function syncConversations(
   // Walk source directory
   const projectEntries = fs.readdirSync(sourceDir, { withFileTypes: true });
   const excludedProjects = getExcludedProjects();
+  const excludedDirSet = new Set(excludedProjects);
 
   for (const projectEntry of projectEntries) {
     // Dirent.isDirectory() does not follow symlinks — worktree symlinks are skipped automatically
@@ -112,7 +113,7 @@ export async function syncConversations(
 
     const projectPath = path.join(sourceDir, project);
 
-    const files = findJsonlFiles(projectPath);
+    const files = findJsonlFiles(projectPath, excludedDirSet);
 
     for (const file of files) {
       const srcFile = path.join(projectPath, file);

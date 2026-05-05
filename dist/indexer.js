@@ -34,6 +34,7 @@ export async function indexConversations(limitToProject, maxConversations, concu
     let totalExchanges = 0;
     let conversationsProcessed = 0;
     const excludedProjects = getExcludedProjects();
+    const excludedDirSet = new Set(excludedProjects);
     for (const sourceDir of sourceDirs) {
         for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
             if (!projectEntry.isDirectory())
@@ -48,7 +49,7 @@ export async function indexConversations(limitToProject, maxConversations, concu
             if (limitToProject && project !== limitToProject)
                 continue;
             const projectPath = path.join(sourceDir, project);
-            const files = findJsonlFiles(projectPath);
+            const files = findJsonlFiles(projectPath, excludedDirSet);
             if (files.length === 0)
                 continue;
             console.log(`\nProcessing project: ${project} (${files.length} conversations)`);
@@ -132,6 +133,7 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
     const sourceDirs = getConversationSourceDirs();
     const ARCHIVE_DIR = getArchiveDir();
     const excludedProjects = getExcludedProjects();
+    const excludedDirSet = new Set(excludedProjects);
     let found = false;
     for (const sourceDir of sourceDirs) {
         for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
@@ -141,7 +143,7 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
             if (excludedProjects.includes(project))
                 continue;
             const projectPath = path.join(sourceDir, project);
-            const files = findJsonlFiles(projectPath).filter(f => f.includes(sessionId));
+            const files = findJsonlFiles(projectPath, excludedDirSet).filter(f => f.includes(sessionId));
             if (files.length > 0) {
                 found = true;
                 const file = files[0];
@@ -197,6 +199,7 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
     const sourceDirs = getConversationSourceDirs();
     const ARCHIVE_DIR = getArchiveDir();
     const excludedProjects = getExcludedProjects();
+    const excludedDirSet = new Set(excludedProjects);
     const unprocessed = [];
     // Collect all unprocessed conversations from all source dirs
     for (const sourceDir of sourceDirs) {
@@ -207,28 +210,30 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
             if (excludedProjects.includes(project))
                 continue;
             const projectPath = path.join(sourceDir, project);
-            const files = findJsonlFiles(projectPath);
+            const files = findJsonlFiles(projectPath, excludedDirSet);
             for (const file of files) {
                 const sourcePath = path.join(projectPath, file);
                 const projectArchive = path.join(ARCHIVE_DIR, project);
                 const archivePath = path.join(projectArchive, file);
                 const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
-                // Check if already indexed in database
-                const alreadyIndexed = db.prepare('SELECT COUNT(*) as count FROM exchanges WHERE archive_path = ?')
-                    .get(archivePath);
-                if (alreadyIndexed.count > 0)
-                    continue;
+                // High-water mark: index exchanges past the last line we've already covered.
+                // Transcript JSONLs are append-only, so MAX(line_end) tells us where to resume.
+                const hw = db.prepare('SELECT COALESCE(MAX(line_end), 0) as maxLine FROM exchanges WHERE archive_path = ?').get(archivePath);
+                const maxIndexedLine = hw.maxLine;
                 // Ensure parent dirs exist for subagent files
                 fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-                // Archive if needed
-                if (!fs.existsSync(archivePath)) {
+                // Refresh the archive when the source may have grown beyond what we've seen.
+                if (!fs.existsSync(archivePath) || maxIndexedLine > 0) {
                     fs.copyFileSync(sourcePath, archivePath);
                 }
-                // Parse and check
+                // Parse and filter to exchanges past the high-water mark
                 const exchanges = await parseConversation(sourcePath, project, archivePath);
-                if (exchanges.length === 0)
+                const newExchanges = maxIndexedLine > 0
+                    ? exchanges.filter(e => e.lineStart > maxIndexedLine)
+                    : exchanges;
+                if (newExchanges.length === 0)
                     continue;
-                unprocessed.push({ project, file, sourcePath, archivePath, summaryPath, exchanges });
+                unprocessed.push({ project, file, sourcePath, archivePath, summaryPath, exchanges: newExchanges });
             }
         }
     } // end sourceDir loop

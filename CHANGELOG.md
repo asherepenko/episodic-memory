@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - Upstream merge from obra/episodic-memory
+
+### Merged from upstream
+- **bge-small-en-v1.5 encoder + auto-migration** (upstream 1.2.0): replaces `all-MiniLM-L6-v2`. Top-1 retrieval accuracy 47% → 53%, top-10 68% → 75%. Existing indexes auto-migrate in batches behind a lock; tunable via `EPISODIC_MEMORY_MIGRATION_BATCH`. New `exchanges.embedding_version` column tracks per-row encoder version. Switches from `@xenova/transformers` to `@huggingface/transformers`. Resolves upstream #82.
+- **Search metadata filters** (upstream #63): `--project`, `--session-id`, `--git-branch` flags on CLI and MCP; bound parameters replace string interpolation for time filters.
+- **`exclude.txt` nested directory matching** (upstream #80): adding `subagents` now also skips `<project>/<session>/subagents/agent-*.jsonl`.
+- **Indexer no longer skips appended exchanges** (upstream #84): `MAX(line_end)` high-water mark replaces `COUNT(*) > 0`, so transcripts that grow after their first index pass pick up their tail.
+- **Cosine similarity scores corrected** (upstream #55): `1 - d²/2` for unit-normalized embeddings instead of `1 - row.distance`. Display/aggregation correction; ordering unchanged.
+- **`tool_calls` `ON DELETE CASCADE`** (upstream #81): one-time idempotent migration recreates the table with cascade and drops orphaned rows. `index --repair` no longer crashes with `SQLITE_CONSTRAINT_FOREIGNKEY`.
+- **Recursive process cascade hotfix** (upstream #87, #88): `EPISODIC_MEMORY_SUMMARIZER_GUARD` env var is set when calling the SDK and inherited by the spawned subprocess; `sync-cli` exits silently when seen, breaking the recursive sync→summarizer→SessionStart loop.
+- **Summarizer no longer pollutes `~/.claude/projects/`** (upstream #83): `persistSession: false` passed to the SDK so summarization no longer creates fake session JSONLs.
+- **Single source of truth for version numbers** (upstream 1.1.1): `src/version.ts` is generated from `package.json` at prebuild/pretest time; MCP server reports the actual plugin version. Drift test in `test/version-consistency.test.ts`.
+- **Windows hook quoting fix** (upstream #75): SessionStart hook command quotes `${CLAUDE_PLUGIN_ROOT}`.
+- **`--prefer-offline` removed** from MCP wrapper's `npm install` (upstream #76).
+- **API configuration env vars for summarization** (upstream #37): `EPISODIC_MEMORY_API_MODEL`, `EPISODIC_MEMORY_API_MODEL_FALLBACK`, `EPISODIC_MEMORY_API_BASE_URL`, `EPISODIC_MEMORY_API_TOKEN`, `EPISODIC_MEMORY_API_TIMEOUT_MS`.
+- **`@anthropic-ai/claude-agent-sdk` bumped to 0.2.x** (transitively requires zod 4).
+
 ## [1.2.1] - 2026-05-05
 
 ### Fixed
@@ -91,6 +108,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--limit <n>` flag for `sync` command**: Control how many summaries are generated per sync run (default: 10)
   - Example: `episodic-memory sync --limit 50`
   - Correctly forwarded when combined with `--background`
+---
+
+## Upstream release history (obra/episodic-memory)
+
+The fork-version numbers above (1.1.x, 1.2.x) reuse the same major.minor as upstream but carry different content. Upstream's own release notes are preserved below for reference; their fixes have been merged into this fork as noted in the **Unreleased — Upstream merge** section at the top.
+
+## Upstream [1.2.0] - 2026-05-03
+
+### Better search results
+
+This release upgrades the embedding model used for semantic search. On a 17,000-exchange retrieval test built from real production data, the new model puts the right answer at rank 1 about **53% of the time, up from 47%**. Top-10 accuracy improves from 68% to 75%.
+
+The new model is `bge-small-en-v1.5` (BAAI), replacing `all-MiniLM-L6-v2`. Both produce 384-dimensional embeddings, so storage is unchanged.
+
+### Automatic migration
+
+Existing indexes upgrade themselves in the background. After you install 1.2.0, each `episodic-memory sync` re-embeds up to 500 stored exchanges with the new model. Claude Code triggers a sync at every session start, so most indexes finish migrating after roughly 60 sync runs — a few days of normal use.
+
+During sync you'll see a line like this on stderr:
+
+    episodic-memory: re-embedding batch of 500 (29569 stale total)...
+
+Search keeps working throughout. The index holds a mix of old and new embeddings until migration finishes; ranking is slightly noisier but never broken.
+
+To finish faster, run a sync with a larger batch:
+
+    EPISODIC_MEMORY_MIGRATION_BATCH=5000 episodic-memory sync
+
+That takes about a minute per call on a recent Mac.
+
+If two syncs run at once, only one re-embeds; the other skips its migration step. A crash mid-batch leaves the unfinished rows tagged for migration, and the next sync picks up where the previous one stopped.
+
+### Other notes
+
+- **First sync after upgrade** downloads a new 34 MB model file.
+- **Rollback to 1.1.x is safe.** Search still works against a partially-migrated index.
+- **Resolves #82** (ONNX runtime crash on Node 23 and earlier) as a side effect of the underlying library upgrade.
+
+## Upstream [1.1.2] - 2026-05-03
+
+### Fixed
+- **Critical: recursive process explosion from auto-sync** (#87, #88, thanks @kaankoken and @materemias for the diagnosis):
+  - The `persistSession: false` fix in 1.1.0 (#83) prevented the SDK-spawned Claude subprocess from *saving* its session JSONL, but did not stop the subprocess from *firing the SessionStart hook*. That re-ran `episodic-memory sync --background`, which re-summarized, which spawned another Claude subprocess, which fired the hook again — fanning out hundreds of detached processes, saturating CPU, and burning API quota.
+  - Added a reentrancy guard env var `EPISODIC_MEMORY_SUMMARIZER_GUARD`, set when calling the SDK's `query()` and inherited by the spawned subprocess. The `sync-cli` entry point checks the guard at startup and exits silently when it's set, breaking the recursive cascade at its only feasible point.
+  - Coverage: unit tests for `getApiEnv()` (always sets the guard) and `shouldSkipReentrantSync()`, plus an integration test that spawns `dist/sync-cli.js` with the guard env and asserts a clean exit without doing work.
+  - Anyone affected by the cascade should update to 1.1.2 immediately. If 1.1.0 or 1.1.1 had been spawning processes, kill any lingering `episodic-memory` and `claude-agent-sdk` children before restarting Claude Code.
+
+## Upstream [1.1.1] - 2026-05-03
+
+### Fixed
+- **MCP server now reports the actual plugin version** in its protocol handshake instead of the long-stale hardcoded `1.0.0`. Inspector tools and any client logging the server identity will now see the real version.
+
+### Changed
+- **Single source of truth for version numbers.** `package.json` is the source; `src/version.ts` is generated from it at prebuild/pretest time and is referenced by `mcp-server.ts`. Source code can no longer drift from the declared package version.
+- **Drift test for manifest files.** A new `test/version-consistency.test.ts` asserts `package.json`, `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json` all agree. CI fails if anyone bumps one without the others.
+- **`scripts/bump-version.sh` + `.version-bump.json`** for one-command version bumps with built-in audit (greps the repo for stale version strings in undeclared files). Run `./scripts/bump-version.sh X.Y.Z` to update all declared files; `--check` reports current state, `--audit` scans for stragglers.
+
+## Upstream [1.1.0] - 2026-05-02
+
+### Added
+- **Search metadata filters** (#63, thanks @jwk2601 for the design): `--project`, `--session-id`, and `--git-branch` flags scope results by exact-match project name, session ID, or git branch. Available on the CLI and the MCP `search` tool. Filter values bind as positional SQL parameters; the existing `--after`/`--before` time filters were converted from string interpolation to bound parameters in the same change.
+- **API configuration env vars for summarization** (#37, thanks @techjoec):
+  - `EPISODIC_MEMORY_API_MODEL` — override the summarizer model (default: haiku)
+  - `EPISODIC_MEMORY_API_MODEL_FALLBACK` — fallback model on errors (default: sonnet)
+  - `EPISODIC_MEMORY_API_BASE_URL` — custom Anthropic endpoint
+  - `EPISODIC_MEMORY_API_TOKEN` — auth token for custom endpoint
+  - `EPISODIC_MEMORY_API_TIMEOUT_MS` — request timeout
+
+### Changed
+- **Bumped `@anthropic-ai/claude-agent-sdk` to 0.2.x** (transitively requires zod 4). Required for the `persistSession` option used by the #83 fix.
+- **`tool_calls` schema now uses `ON DELETE CASCADE`** (#81). Fresh databases create the table with cascade; existing databases get a one-time migration that recreates `tool_calls` with cascade and drops any orphaned rows. The migration is idempotent and runs only when the schema lacks `ON DELETE CASCADE`.
+- **`exclude.txt` matches nested directory names** (#80, thanks @rohitgehe05 for the diagnosis): adding `subagents` now also skips `<project>/<session>/subagents/agent-*.jsonl` instead of only matching top-level project directories.
+
+### Fixed
+- **Indexer skipped appended exchanges** (#84, thanks @jamster for the diagnosis and detection script): the `COUNT(*) > 0` skip was replaced with a `MAX(line_end)` high-water mark, so transcripts that grow after their first index pass now pick up their tail. Resumed sessions and SessionStart syncs that race the still-running session no longer silently lose the trailing content.
+- **Search similarity scores were wrong** (#55, thanks @gmax111): `1 - row.distance` was treating L2 distance as cosine distance. For unit-normalized embeddings the correct conversion is `1 - d²/2`. Result ordering was already correct (the formula was monotonic in distance), so this is a display/aggregation correction, not a ranking change.
+- **Summarizer session pollution** (#83, thanks @benseeley for the detailed reproduction): `persistSession: false` is now passed to the SDK, so summarization no longer creates fake session JSONLs in `~/.claude/projects/<cwd-slug>/`.
+- **`deleteExchange` FK crash** (#81, thanks @rohitgehe05): `index --repair` no longer fails with `SQLITE_CONSTRAINT_FOREIGNKEY` on exchanges that have associated tool_calls.
+- **Windows hook fails on home directories with spaces** (#75, thanks @phantomsecurityandfire and @officialasishkumar): the SessionStart hook command now quotes `${CLAUDE_PLUGIN_ROOT}`.
+- **MCP install fails with `ETARGET` on stale npm cache** (#76, thanks @DarkbyteAT and @mvanhorn): removed `--prefer-offline` from the wrapper's `npm install` invocation.
+- **MCP protocol corruption from embedding model output** (#48): the embedding model's stdout is now redirected to stderr.
+- **Orphaned MCP processes** (#54): added SIGHUP handler and stdin-close detection to the wrapper.
+- **`exclude.txt` ignored at sync time** (#38): now honored by sync and verify commands.
+- **Bundled file-discovery and path fixes** (#42, #50, #57, #62, #68, #70, #72): sidechain filtering in search, SessionStart `clear` matcher, `CLAUDE_CONFIG_DIR` support, recursive subagent file discovery, support for both `~/.claude/projects` and `~/.claude/transcripts`, and explicit surfacing of summarization failures.
+
+### Documentation
+- Fix npm install instructions to use the GitHub source (#71).
+
+---
+
+## Shared release history (1.0.0 – 1.0.15)
 
 ## [1.0.15] - 2025-12-17
 
