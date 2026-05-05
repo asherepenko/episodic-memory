@@ -13,9 +13,10 @@ npm run test:watch    # Watch mode
 ```
 
 **Entry points**
-- `cli/episodic-memory.js` — unified CLI (subcommands: sync, search, show, stats, verify)
+- `cli/episodic-memory` (extension-less shim) → `dist/cli/episodic-memory.js` (compiled from `src/cli/episodic-memory.ts`); unified CLI (subcommands: sync, search, show, stats, verify)
 - `dist/mcp-server.js` — MCP server (bundled ESM); exposes search_conversations, show_conversation tools
-- `cli/mcp-server-wrapper.js` — wrapper script; logs stderr separately to prevent protocol corruption
+- `cli/mcp-server` (shim) → `dist/cli/mcp-server-wrapper.js` (compiled from `src/cli/mcp-server-wrapper.ts`); logs stderr separately to prevent protocol corruption
+- All CLI logic now in TypeScript under `src/cli/` and compiles to `dist/cli/`. The `cli/` directory holds only thin extension-less spawn shims pinned by package.json `bin` entries.
 - CLI bins: episodic-memory, episodic-memory-search, episodic-memory-mcp-server, episodic-memory-index
 
 ## Project Structure
@@ -40,14 +41,24 @@ src/
 dist/
   index.js              # Exports from src/
   mcp-server.js         # Bundled MCP server (esbuild)
+  cli/                  # Compiled CLI scripts (from src/cli/*.ts) with shebangs
+    episodic-memory.js
+    index-conversations.js
+    mcp-server-wrapper.js
+    search-conversations.js
   *.d.ts                # Type declarations
 
-cli/
-  episodic-memory.js    # Main entry; routes to subcommands
-  mcp-server-wrapper.js # Wrapper; redirects stderr
-  index-conversations.js
-  search-conversations
+src/cli/
+  episodic-memory.ts        # Main entry; routes to subcommands
+  index-conversations.ts    # Indexing CLI
+  mcp-server-wrapper.ts     # MCP server wrapper; redirects stderr
+  search-conversations.ts   # Search CLI
+
+cli/                    # Extension-less shims for npm bin entries (spawn dist/cli/*.js)
+  episodic-memory
+  index-conversations
   mcp-server
+  search-conversations
 
 test/
   *.test.ts             # Real SQLite tests; no mocks
@@ -88,7 +99,7 @@ test/
 
 ### MCP Server Quirks
 - Embedding output sent to stderr, not stdout (prevents protocol corruption)
-- `cli/mcp-server-wrapper.js` redirects stderr separately
+- `dist/cli/mcp-server-wrapper.js` (compiled from `src/cli/mcp-server-wrapper.ts`) redirects stderr separately
 - Bundled via esbuild with externals: `fsevents`, `@anthropic-ai/claude-agent-sdk`, `sharp`, `onnxruntime-node`, `better-sqlite3`, `@xenova/transformers`, `sqlite-vec`
 
 ### Database Schema

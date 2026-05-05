@@ -8,10 +8,12 @@ import { createInterface } from 'readline';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(realpathSync(__filename));
 
-function runScript(command, args) {
+function runScript(command: string, scriptArgs: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [join(__dirname, '../dist/index-cli.js'), command, ...args], {
-      stdio: 'inherit'
+    // Compiled location: <plugin>/dist/cli/index-conversations.js → index-cli at ../index-cli.js
+    const indexCli = join(dirname(__dirname), 'index-cli.js');
+    const child = spawn(process.execPath, [indexCli, command, ...scriptArgs], {
+      stdio: 'inherit',
     });
 
     child.on('exit', (code) => {
@@ -28,11 +30,11 @@ function runScript(command, args) {
   });
 }
 
-function askConfirmation(question) {
+function askConfirmation(question: string): Promise<boolean> {
   return new Promise((resolve) => {
     const rl = createInterface({
       input: process.stdin,
-      output: process.stdout
+      output: process.stdout,
     });
 
     rl.question(question, (answer) => {
@@ -42,7 +44,7 @@ function askConfirmation(question) {
   });
 }
 
-function showHelp() {
+function showHelp(): void {
   console.log(`index-conversations - Index and manage conversation archives
 
 USAGE:
@@ -92,9 +94,9 @@ SEE ALSO:
   DEPLOYMENT.md - Production runbook`);
 }
 
-async function main() {
-  const command = process.argv[2];
-  const args = process.argv.slice(3);
+async function main(): Promise<void> {
+  const command: string | undefined = process.argv[2];
+  const args: string[] = process.argv.slice(3);
 
   try {
     switch (command) {
@@ -124,7 +126,7 @@ async function main() {
         await runScript('repair', args);
         break;
 
-      case '--rebuild':
+      case '--rebuild': {
         console.log('⚠️  This will DELETE the entire database and re-index everything.');
         const confirmed = await askConfirmation('Are you sure? [yes/NO]: ');
         if (confirmed) {
@@ -133,18 +135,19 @@ async function main() {
           console.log('Cancelled');
         }
         break;
+      }
 
       default:
         await runScript('index-all', [command, ...args]);
         break;
     }
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
   }
 }
 
-main().catch((error) => {
+main().catch((error: Error) => {
   console.error(`Unexpected error: ${error.message}`);
   process.exit(1);
 });

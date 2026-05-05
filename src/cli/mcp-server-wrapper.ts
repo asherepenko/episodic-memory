@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Cross-platform wrapper script for MCP server that ensures dependencies are installed
- * This runs before the MCP server starts and works on Windows, macOS, and Linux
+ * Cross-platform wrapper script for MCP server that ensures dependencies are installed.
+ * This runs before the MCP server starts and works on Windows, macOS, and Linux.
  */
 
 import { spawn } from 'child_process';
@@ -12,11 +12,10 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Determine plugin root directory
-const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(__dirname, '..');
+// Compiled location: <plugin>/dist/cli/mcp-server-wrapper.js → plugin root is ../..
+const PLUGIN_ROOT: string = process.env.CLAUDE_PLUGIN_ROOT || join(__dirname, '..', '..');
 
-// Helper function to run npm install
-function runNpmInstall() {
+function runNpmInstall(): Promise<void> {
   return new Promise((resolve, reject) => {
     const isWindows = process.platform === 'win32';
     const npmCommand = isWindows ? 'npm.cmd' : 'npm';
@@ -24,19 +23,18 @@ function runNpmInstall() {
     console.error('Installing episodic-memory dependencies (first run only)...');
     console.error('This may take 30-60 seconds...');
 
-    // Install dependencies - npm will auto-install optionalDependencies for current platform
     const child = spawn(npmCommand, ['install', '--prefer-offline', '--no-audit', '--no-fund'], {
       cwd: PLUGIN_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: isWindows // On Windows, we need shell: true to find npm.cmd
+      shell: isWindows,
     });
 
-    child.stdout.on('data', (data) => {
+    child.stdout?.on('data', (data: Buffer) => {
       // Suppress npm install output to stderr to avoid cluttering MCP logs
       process.stderr.write(data);
     });
 
-    child.stderr.on('data', (data) => {
+    child.stderr?.on('data', (data: Buffer) => {
       process.stderr.write(data);
     });
 
@@ -58,15 +56,13 @@ function runNpmInstall() {
   });
 }
 
-async function main() {
+async function main(): Promise<void> {
   try {
-    // Check if node_modules exists
     const nodeModulesPath = join(PLUGIN_ROOT, 'node_modules');
     if (!existsSync(nodeModulesPath)) {
       await runNpmInstall();
     }
 
-    // Start the MCP server
     const mcpServerPath = join(PLUGIN_ROOT, 'dist', 'mcp-server.js');
 
     if (!existsSync(mcpServerPath)) {
@@ -75,19 +71,16 @@ async function main() {
       process.exit(1);
     }
 
-    // Use spawn with shell: false for better cross-platform compatibility
     const child = spawn(process.execPath, [mcpServerPath], {
       stdio: 'inherit',
-      shell: false
+      shell: false,
     });
 
-    // Forward signals to the child process
     process.on('SIGTERM', () => child.kill('SIGTERM'));
     process.on('SIGINT', () => child.kill('SIGINT'));
     process.on('SIGHUP', () => child.kill('SIGHUP'));
 
     // Detect parent process death via stdin close
-    // When Claude exits (normally or abnormally), stdin will close
     process.stdin.on('end', () => {
       child.kill();
       process.exit(0);
@@ -105,14 +98,13 @@ async function main() {
       console.error(`ERROR: Failed to start MCP server: ${err.message}`);
       process.exit(1);
     });
-
   } catch (error) {
-    console.error(`ERROR: ${error.message}`);
+    console.error(`ERROR: ${(error as Error).message}`);
     process.exit(1);
   }
 }
 
-main().catch((error) => {
+main().catch((error: Error) => {
   console.error(`Unexpected error: ${error.message}`);
   process.exit(1);
 });

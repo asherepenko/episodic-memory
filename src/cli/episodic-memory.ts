@@ -7,13 +7,13 @@ import { realpathSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(realpathSync(__filename));
 
-const command = process.argv[2];
-const args = process.argv.slice(3);
+const command: string | undefined = process.argv[2];
+const args: string[] = process.argv.slice(3);
 
-function runScript(scriptPath, args) {
+function runScript(scriptPath: string, scriptArgs: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [scriptPath, ...args], {
-      stdio: 'inherit'
+    const child = spawn(process.execPath, [scriptPath, ...scriptArgs], {
+      stdio: 'inherit',
     });
 
     child.on('exit', (code) => {
@@ -30,7 +30,7 @@ function runScript(scriptPath, args) {
   });
 }
 
-function showHelp() {
+function showHelp(): void {
   console.log(`episodic-memory - Manage and search Claude Code conversations
 
 USAGE:
@@ -59,10 +59,11 @@ EXAMPLES:
   episodic-memory show --format html conversation.jsonl > output.html`);
 }
 
-async function main() {
-  try {
-    const distDir = join(__dirname, '../dist');
+async function main(): Promise<void> {
+  // Compiled location: <plugin>/dist/cli/episodic-memory.js → distDir is parent.
+  const distDir = dirname(__dirname);
 
+  try {
     switch (command) {
       case 'index':
         await runScript(join(__dirname, 'index-conversations.js'), args);
@@ -96,12 +97,12 @@ async function main() {
         process.exit(1);
     }
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
   }
 }
 
-main().catch((error) => {
+main().catch((error: Error) => {
   console.error(`Unexpected error: ${error.message}`);
   process.exit(1);
 });
