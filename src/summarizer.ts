@@ -1,6 +1,24 @@
 import { ConversationExchange } from './types.js';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
+import { log } from './logger.js';
+import { loadPartial, savePartial, clearPartial } from './partial.js';
+
+const DEFAULT_CALL_TIMEOUT_MS = 180_000; // 3 min per Claude SDK call
+
+function getCallTimeoutMs(): number {
+  const raw = process.env.EPISODIC_MEMORY_API_TIMEOUT_MS;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CALL_TIMEOUT_MS;
+}
+
+export class SummarizerTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Claude SDK call exceeded ${timeoutMs}ms timeout`);
+    this.name = 'SummarizerTimeoutError';
+  }
+}
 
 /**
  * Get API environment overrides for summarization calls.
@@ -50,38 +68,75 @@ async function callClaude(prompt: string, sessionId?: string, useFallback = fals
   const primaryModel = process.env.EPISODIC_MEMORY_API_MODEL || 'haiku';
   const fallbackModel = process.env.EPISODIC_MEMORY_API_MODEL_FALLBACK || 'sonnet';
   const model = useFallback ? fallbackModel : primaryModel;
+  const timeoutMs = getCallTimeoutMs();
+  const abortController = new AbortController();
+  const startedAt = Date.now();
 
-  for await (const message of query({
-    prompt,
-    options: {
-      model,
-      max_tokens: 4096,
-      env: getApiEnv(),
-      resume: sessionId,
-      // Don't override systemPrompt when resuming - it uses the original session's prompt
-      // Instead, the prompt itself should provide clear instructions
-      ...(sessionId ? {} : {
-        systemPrompt: 'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Your output will be indexed directly.'
-      })
-    } as any
-  })) {
-    if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
-      const result = (message as any).result;
+  log.debug(`callClaude start model=${model} sessionId=${sessionId ?? 'none'} timeoutMs=${timeoutMs}`);
 
-      // Check if result is an API error (SDK returns errors as result strings)
-      if (typeof result === 'string' && result.includes('API Error') && result.includes('thinking.budget_tokens')) {
-        if (!useFallback) {
-          console.log(`    ${primaryModel} hit thinking budget error, retrying with ${fallbackModel}`);
-          return await callClaude(prompt, sessionId, true);
+  const timer = setTimeout(() => {
+    log.warn(`callClaude timeout after ${timeoutMs}ms — aborting (model=${model})`);
+    abortController.abort();
+  }, timeoutMs);
+
+  try {
+    const iterator = query({
+      prompt,
+      options: {
+        model,
+        max_tokens: 4096,
+        env: getApiEnv(),
+        resume: sessionId,
+        abortController,
+        // Isolation: skip user/project settings, MCP servers, and tools.
+        // Cuts subprocess cold-start from ~10s to ~2s per call.
+        settingSources: [],
+        mcpServers: {},
+        allowedTools: [],
+        disallowedTools: ['*'],
+        strictMcpConfig: true,
+        // Pipe subprocess stderr into our log file at debug level — gives live
+        // visibility into MCP/auth/network issues without cluttering stdout.
+        stderr: (data: string) => {
+          const trimmed = String(data).trim();
+          if (trimmed) log.debug(`[sdk] ${trimmed}`);
+        },
+        // Don't override systemPrompt when resuming - it uses the original session's prompt
+        // Instead, the prompt itself should provide clear instructions
+        ...(sessionId ? {} : {
+          systemPrompt: 'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Your output will be indexed directly.'
+        })
+      } as any
+    });
+
+    for await (const message of iterator) {
+      if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
+        const result = (message as any).result;
+        const elapsed = Date.now() - startedAt;
+        log.debug(`callClaude done model=${model} elapsedMs=${elapsed}`);
+
+        // Check if result is an API error (SDK returns errors as result strings)
+        if (typeof result === 'string' && result.includes('API Error') && result.includes('thinking.budget_tokens')) {
+          if (!useFallback) {
+            log.info(`  ${primaryModel} hit thinking budget error, retrying with ${fallbackModel}`);
+            return await callClaude(prompt, sessionId, true);
+          }
+          // If fallback also fails, return error message
+          return result;
         }
-        // If fallback also fails, return error message
+
         return result;
       }
-
-      return result;
     }
+    return '';
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      throw new SummarizerTimeoutError(timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return '';
 }
 
 function chunkExchanges(exchanges: ConversationExchange[], chunkSize: number): ConversationExchange[][] {
@@ -92,111 +147,403 @@ function chunkExchanges(exchanges: ConversationExchange[], chunkSize: number): C
   return chunks;
 }
 
-export async function summarizeConversation(exchanges: ConversationExchange[], sessionId?: string): Promise<string> {
-  // Handle trivial conversations
+const TRIVIAL_USER_PATTERNS = [
+  /^\/(clear|exit|help|init|compact|status|model|cost|theme|login|logout|config|fast|caveman.*|loop|cancel.*|ship|kickoff|verify|todo|build|recall|sweep|todo|dream|triage|handoff)(\s|$)/i,
+  /^(yes|no|y|n|ok|ack|continue|go|stop|thanks|thank you|cool|nice|done|next)\.?$/i,
+];
+
+function isTrivialUserMessage(msg: string): boolean {
+  const trimmed = msg.trim();
+  if (trimmed.length === 0) return true;
+  return TRIVIAL_USER_PATTERNS.some(rx => rx.test(trimmed));
+}
+
+/**
+ * Fast pre-filter: returns a trivial summary if the conversation has no
+ * substantive user prose, otherwise null (caller should run full SDK summary).
+ *
+ * Catches: only slash-commands, only ack words, total user text <500 chars,
+ * empty assistant outputs.
+ */
+export function detectTrivial(exchanges: ConversationExchange[]): string | null {
   if (exchanges.length === 0) {
     return 'Trivial conversation with no substantive content.';
   }
 
-  if (exchanges.length === 1) {
-    const text = formatConversationText(exchanges);
-    if (text.length < 100 || exchanges[0].userMessage.trim() === '/exit') {
-      return 'Trivial conversation with no substantive content.';
-    }
+  const substantive = exchanges.filter(ex => !isTrivialUserMessage(ex.userMessage));
+  if (substantive.length === 0) {
+    return 'Trivial conversation: only slash-commands or acknowledgements.';
   }
 
-  // For short conversations (≤15 exchanges), summarize directly
-  if (exchanges.length <= 15) {
-    const conversationText = sessionId
-      ? '' // When resuming, no need to include conversation text - it's already in context
-      : formatConversationText(exchanges);
+  const totalUserChars = substantive.reduce((sum, ex) => sum + ex.userMessage.trim().length, 0);
+  const totalAssistantChars = exchanges.reduce((sum, ex) => sum + (ex.assistantMessage?.trim().length ?? 0), 0);
 
-    const prompt = `${SUMMARIZER_CONTEXT_MARKER}.
+  if (totalUserChars < 500 && totalAssistantChars < 500) {
+    return 'Trivial conversation with minimal content.';
+  }
 
-Please write a concise, factual summary of this conversation. Output ONLY the summary - no preamble. Claude will see this summary when searching previous conversations for useful memories and information.
+  if (totalAssistantChars === 0) {
+    return 'Trivial conversation: no assistant output.';
+  }
 
-Summarize what happened in 2-4 sentences. Be factual and specific. Output in <summary></summary> tags.
+  return null;
+}
 
-Include:
-- What was built/changed/discussed (be specific)
-- Key technical decisions or approaches
-- Problems solved or current state
+// ─── Prompt builders ──────────────────────────────────────────────────────────
+// Tiered prompts (#6 + #9). XML output schema for grep-friendly summaries.
 
-Exclude:
-- Apologies, meta-commentary, or your questions
-- Raw logs or debug output
-- Generic descriptions - focus on what makes THIS conversation unique
+const COMMON_RULES = `Rules:
+- Output ONLY the requested XML. No preamble, no apologies, no meta-commentary.
+- Be specific: name files, modules, libraries, decisions. Avoid generic phrases.
+- Skip raw logs, stack traces, exact error strings — capture intent and outcome.
+- Use past-tense, active voice. One concrete claim per element.`;
 
-Good:
-<summary>Built JWT authentication for React app with refresh tokens and protected routes. Fixed token expiration bug by implementing refresh-during-request logic.</summary>
+function buildShortPrompt(conversationText: string): string {
+  return `${SUMMARIZER_CONTEXT_MARKER}.
 
-Bad:
-<summary>I apologize. The conversation discussed authentication and various approaches were considered...</summary>
+Write a one-line label (≤25 words) capturing what this short conversation accomplished. Output in <summary></summary>.
 
+${COMMON_RULES}
+
+Examples:
+<summary>Renamed FeedRepository.fetchPage() to loadPage() across 4 callers; tests still green.</summary>
+<summary>Diagnosed flaky CI run on main; root cause was missing TZ=UTC in Postgres container.</summary>
+<summary>Added retry-with-backoff wrapper around Stripe webhook verification; 3 unit tests added.</summary>
+
+Conversation:
 ${conversationText}`;
+}
 
-    const result = await callClaude(prompt, sessionId);
-    return extractSummary(result);
-  }
+function buildMediumPrompt(conversationText: string, includeText: boolean): string {
+  return `${SUMMARIZER_CONTEXT_MARKER}.
 
-  // For long conversations, use hierarchical summarization
-  console.log(`  Long conversation (${exchanges.length} exchanges) - using hierarchical summarization`);
+Summarize this conversation. Output exactly this XML structure:
 
-  // Note: Hierarchical summarization doesn't support resume mode (needs fresh session for each chunk)
-  // This is fine since we only use resume for the main session-end hook
+<summary>
+  <changes>2-3 sentences on what was built/changed/refactored. Name files, functions, modules.</changes>
+  <decisions>Key technical decisions or trade-offs. Use "decided X over Y because Z" form. Empty tag if none.</decisions>
+  <blockers>Open problems, dead ends, or current state if mid-flight. Empty tag if all resolved.</blockers>
+</summary>
 
-  // Chunk into groups of 8 exchanges
-  const chunks = chunkExchanges(exchanges, 8);
-  console.log(`  Split into ${chunks.length} chunks`);
+${COMMON_RULES}
 
-  // Summarize each chunk
-  const chunkSummaries: string[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkText = formatConversationText(chunks[i]);
-    const prompt = `${SUMMARIZER_CONTEXT_MARKER}.
+Examples:
 
-Please write a concise summary of this part of a conversation in 2-3 sentences. What happened, what was built/discussed. Use <summary></summary> tags.
+<summary>
+  <changes>Added OfflineFirstFeedRepository in feature/feed/impl backed by Room (FeedDao) and a Retrofit FeedApi. Wired into FeedViewModel via Hilt.</changes>
+  <decisions>Decided NetworkBoundResource pattern over manual Flow.combine because the team already uses it in PostRepository. Picked SQLite FTS over LIKE search for offline query path.</decisions>
+  <blockers>Pagination cursor handling unfinished — last-page detection still uses size==0 heuristic.</blockers>
+</summary>
 
-${chunkText}
+<summary>
+  <changes>Diagnosed sync hang in episodic-memory; added AbortController + 180s timeout in summarizer.ts, structured logger writing to sync.log, and bounded concurrency pool (default 2).</changes>
+  <decisions>Decided against direct Anthropic SDK because Andrew wants subscription auth. Picked settingSources:[] + mcpServers:{} to strip MCP cold-start.</decisions>
+  <blockers></blockers>
+</summary>
 
-Example: <summary>Implemented HID keyboard functionality for ESP32. Hit Bluetooth controller initialization error, fixed by adjusting memory allocation.</summary>`;
+${includeText ? 'Conversation:\n' + conversationText : ''}`;
+}
 
-    try {
-      const summary = await callClaude(prompt); // No sessionId for chunks
-      const extracted = extractSummary(summary);
-      chunkSummaries.push(extracted);
-      console.log(`  Chunk ${i + 1}/${chunks.length}: ${extracted.split(/\s+/).length} words`);
-    } catch (error) {
-      console.log(`  Chunk ${i + 1} failed, skipping`);
-    }
-  }
+function buildChunkPrompt(chunkText: string, chunkNum: number, totalChunks: number): string {
+  return `${SUMMARIZER_CONTEXT_MARKER}.
 
-  if (chunkSummaries.length === 0) {
-    return 'Error: Unable to summarize conversation.';
-  }
+Summarize part ${chunkNum}/${totalChunks} of a long conversation in ≤3 sentences. Capture concrete actions and decisions only.
 
-  // Synthesize chunks into final summary
-  const synthesisPrompt = `${SUMMARIZER_CONTEXT_MARKER}.
+${COMMON_RULES}
 
-Please write a concise, factual summary that synthesizes these part-summaries into one cohesive paragraph. Focus on what was accomplished and any notable technical decisions or challenges. Output in <summary></summary> tags. Claude will see this summary when searching previous conversations for useful memories and information.
+Output: <summary>...</summary>
+
+Example: <summary>Implemented HID keyboard for ESP32 in main.c. Fixed Bluetooth controller init crash by raising BT_CTRL_HCI_TL_BUF_SIZE from 256 to 512.</summary>
+
+Conversation part:
+${chunkText}`;
+}
+
+function buildSynthesisPrompt(chunkSummaries: string[]): string {
+  return `${SUMMARIZER_CONTEXT_MARKER}.
+
+Synthesize these part-summaries into one cohesive XML summary using the schema below.
+
+<summary>
+  <changes>2-4 sentences spanning the whole session. Name files/modules.</changes>
+  <decisions>Key decisions across all parts. Empty tag if none.</decisions>
+  <blockers>Open problems or current state at session end. Empty tag if resolved.</blockers>
+</summary>
+
+${COMMON_RULES}
 
 Part summaries:
 ${chunkSummaries.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 
-Good:
-<summary>Built conversation search system with JavaScript, sqlite-vec, and local embeddings. Implemented hierarchical summarization for long conversations. System archives conversations permanently and provides semantic search via CLI.</summary>
+Your synthesis:`;
+}
 
-Bad:
-<summary>This conversation synthesizes several topics discussed across multiple parts...</summary>
+// ─── Tier detection ───────────────────────────────────────────────────────────
 
-Your summary (max 200 words):`;
+type Tier = 'short' | 'medium' | 'long';
 
-  console.log(`  Synthesizing final summary...`);
-  try {
-    const result = await callClaude(synthesisPrompt); // No sessionId for synthesis
+function pickTier(exchanges: ConversationExchange[]): Tier {
+  const totalChars = exchanges.reduce(
+    (sum, ex) => sum + (ex.userMessage?.length ?? 0) + (ex.assistantMessage?.length ?? 0),
+    0
+  );
+
+  if (exchanges.length <= 15) {
+    if (exchanges.length <= 3 && totalChars < 2000) return 'short';
+    return 'medium';
+  }
+  return 'long';
+}
+
+// ─── Hierarchical session reuse (#1, narrow) ─────────────────────────────────
+// Within ONE long conversation's hierarchical pipeline (N chunks + 1 synthesis),
+// keep one isolated CLI subprocess alive and stream user messages through it.
+// Saves N× cold-start (~2s each) per long conversation. Context bleed across
+// turns is intentional — all chunks belong to the same source conversation.
+
+class HierarchicalSession {
+  private q: Query | null = null;
+  private inbox: SDKUserMessage[] = [];
+  private inboxResolver: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
+  private closed = false;
+  private abortController = new AbortController();
+  private turnsSent = 0;
+
+  private inputStream(): AsyncIterable<SDKUserMessage> {
+    return {
+      [Symbol.asyncIterator]: () => ({
+        next: (): Promise<IteratorResult<SDKUserMessage>> => {
+          if (this.closed && this.inbox.length === 0) {
+            return Promise.resolve({ value: undefined as unknown as SDKUserMessage, done: true });
+          }
+          if (this.inbox.length > 0) {
+            const m = this.inbox.shift()!;
+            return Promise.resolve({ value: m, done: false });
+          }
+          return new Promise(resolve => {
+            this.inboxResolver = resolve;
+          });
+        },
+        return: (): Promise<IteratorResult<SDKUserMessage>> =>
+          Promise.resolve({ value: undefined as unknown as SDKUserMessage, done: true }),
+      }),
+    };
+  }
+
+  private push(prompt: string): void {
+    const msg: SDKUserMessage = {
+      type: 'user',
+      message: { role: 'user', content: prompt } as any,
+      parent_tool_use_id: null,
+      session_id: '',
+    };
+    if (this.inboxResolver) {
+      const r = this.inboxResolver;
+      this.inboxResolver = null;
+      r({ value: msg, done: false });
+    } else {
+      this.inbox.push(msg);
+    }
+  }
+
+  async send(prompt: string, useFallback = false): Promise<string> {
+    const primaryModel = process.env.EPISODIC_MEMORY_API_MODEL || 'haiku';
+    const fallbackModel = process.env.EPISODIC_MEMORY_API_MODEL_FALLBACK || 'sonnet';
+    const model = useFallback ? fallbackModel : primaryModel;
+
+    if (!this.q) {
+      log.debug(`HierarchicalSession start model=${model}`);
+      this.q = query({
+        prompt: this.inputStream(),
+        options: {
+          model,
+          max_tokens: 4096,
+          env: getApiEnv(),
+          abortController: this.abortController,
+          settingSources: [],
+          mcpServers: {},
+          allowedTools: [],
+          disallowedTools: ['*'],
+          strictMcpConfig: true,
+          systemPrompt: 'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Each user message is an independent summarization request — answer it on its own without referring back to prior turns.',
+          stderr: (data: string) => {
+            const trimmed = String(data).trim();
+            if (trimmed) log.debug(`[sdk] ${trimmed}`);
+          },
+        } as any,
+      });
+    }
+
+    const timeoutMs = getCallTimeoutMs();
+    const startedAt = Date.now();
+    const timer = setTimeout(() => {
+      log.warn(`HierarchicalSession turn timeout after ${timeoutMs}ms — aborting session`);
+      this.abortController.abort();
+    }, timeoutMs);
+
+    this.push(prompt);
+    this.turnsSent++;
+
+    try {
+      while (true) {
+        const { value, done } = await this.q.next();
+        if (done) {
+          throw new Error('HierarchicalSession ended unexpectedly');
+        }
+        const m = value as SDKMessage;
+        if (m && (m as any).type === 'result') {
+          const result = (m as any).result;
+          log.debug(`HierarchicalSession turn ${this.turnsSent} done in ${Date.now() - startedAt}ms`);
+          if (typeof result === 'string' && result.includes('API Error') && result.includes('thinking.budget_tokens') && !useFallback) {
+            // Recycle session on fallback (changing model mid-session is unsupported).
+            log.info(`  ${primaryModel} hit thinking budget error, recycling session with ${fallbackModel}`);
+            await this.close();
+            this.reopen();
+            return await this.send(prompt, true);
+          }
+          return result;
+        }
+      }
+    } catch (error) {
+      if (this.abortController.signal.aborted) {
+        throw new SummarizerTimeoutError(timeoutMs);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.inboxResolver) {
+      const r = this.inboxResolver;
+      this.inboxResolver = null;
+      r({ value: undefined as unknown as SDKUserMessage, done: true });
+    }
+    try {
+      this.abortController.abort();
+    } catch {
+      // ignore
+    }
+    this.q = null;
+  }
+
+  /**
+   * Reset internal state after a forced close so a follow-up send() (e.g. the
+   * thinking-budget fallback path) starts a fresh subprocess instead of
+   * landing on a closed input stream.
+   */
+  private reopen(): void {
+    this.closed = false;
+    this.inbox = [];
+    this.inboxResolver = null;
+    this.abortController = new AbortController();
+    this.q = null;
+    this.turnsSent = 0;
+  }
+}
+
+export interface SummarizeOptions {
+  sessionId?: string;
+  /** Path to *-summary.partial.json for resumable hierarchical chunking (#3). */
+  partialPath?: string;
+}
+
+export async function summarizeConversation(
+  exchanges: ConversationExchange[],
+  optsOrSessionId?: string | SummarizeOptions
+): Promise<string> {
+  // Back-compat: callers may pass sessionId positionally.
+  const opts: SummarizeOptions =
+    typeof optsOrSessionId === 'string' ? { sessionId: optsOrSessionId } : (optsOrSessionId ?? {});
+  const { sessionId, partialPath } = opts;
+
+  // Fast pre-filter: skip SDK call entirely for trivial conversations
+  const trivial = detectTrivial(exchanges);
+  if (trivial !== null) {
+    return trivial;
+  }
+
+  const tier = pickTier(exchanges);
+  log.debug(`tier=${tier} exchanges=${exchanges.length}`);
+
+  if (tier === 'short') {
+    const conversationText = formatConversationText(exchanges);
+    const prompt = buildShortPrompt(conversationText);
+    const result = await callClaude(prompt, sessionId);
     return extractSummary(result);
-  } catch (error) {
-    console.log(`  Synthesis failed, using chunk summaries`);
-    return chunkSummaries.join(' ');
+  }
+
+  if (tier === 'medium') {
+    const conversationText = sessionId ? '' : formatConversationText(exchanges);
+    const prompt = buildMediumPrompt(conversationText, !sessionId);
+    const result = await callClaude(prompt, sessionId);
+    return extractSummary(result);
+  }
+
+  // Long → hierarchical
+  log.info(`  Long conversation (${exchanges.length} exchanges) - using hierarchical summarization`);
+
+  const chunks = chunkExchanges(exchanges, 8);
+  log.info(`  Split into ${chunks.length} chunks`);
+
+  // Resume from partial state if available
+  const chunkSummaries: string[] = partialPath
+    ? loadPartial(partialPath, chunks.length, exchanges.length)
+    : [];
+  if (chunkSummaries.length > 0) {
+    log.info(`  Resuming from partial state: ${chunkSummaries.length}/${chunks.length} chunks already done`);
+  }
+
+  // Reuse one CLI subprocess for all chunks + synthesis (#1).
+  const session = new HierarchicalSession();
+  try {
+    for (let i = chunkSummaries.length; i < chunks.length; i++) {
+      const chunkText = formatConversationText(chunks[i]);
+      const prompt = buildChunkPrompt(chunkText, i + 1, chunks.length);
+
+      try {
+        const summary = await session.send(prompt);
+        const extracted = extractSummary(summary);
+        chunkSummaries.push(extracted);
+        log.info(`  Chunk ${i + 1}/${chunks.length}: ${extracted.split(/\s+/).length} words`);
+        if (partialPath) {
+          savePartial(partialPath, chunks.length, chunkSummaries, exchanges.length);
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        log.warn(`  Chunk ${i + 1} failed: ${msg}`);
+        // Persist what we have so a retry can pick up after this index.
+        if (partialPath && chunkSummaries.length > 0) {
+          savePartial(partialPath, chunks.length, chunkSummaries, exchanges.length);
+        }
+        // Re-throw so caller (sync.ts) marks file as failed and retry-state ticks.
+        throw error;
+      }
+    }
+
+    if (chunkSummaries.length === 0) {
+      return 'Error: Unable to summarize conversation.';
+    }
+
+    // Synthesize chunks into final summary — same session reused.
+    const synthesisPrompt = buildSynthesisPrompt(chunkSummaries);
+
+    log.info(`  Synthesizing final summary...`);
+    try {
+      const result = await session.send(synthesisPrompt);
+      const final = extractSummary(result);
+      if (partialPath) clearPartial(partialPath);
+      return final;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.warn(`  Synthesis failed (${msg}), using chunk summaries`);
+      // Keep partial — synthesis can be retried next run from cached chunks.
+      return chunkSummaries.join(' ');
+    }
+  } finally {
+    await session.close();
   }
 }

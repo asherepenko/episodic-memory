@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-05-05
+
+### Fixed
+- **Sync no longer hangs forever during summarization**: `callClaude` now wraps the Claude SDK call in an `AbortController` with a configurable timeout (default 180s, override via `EPISODIC_MEMORY_API_TIMEOUT_MS`). Throws `SummarizerTimeoutError` on hang; sync logs the failure and continues with the next file instead of locking up.
+
+### Added
+- **Structured sync log** at `<index-dir>/sync.log` with ISO-timestamped lines for every step (start/end/elapsed/errors, per-chunk progress, SDK stderr at debug level). `sync` command prints the log path on startup; `EPISODIC_MEMORY_DEBUG=1` adds verbose stderr output.
+- **Subprocess isolation for summarizer SDK calls**: `settingSources: []`, `mcpServers: {}`, `allowedTools: []`, `disallowedTools: ['*']`, `strictMcpConfig: true` passed to every `query()`. Cuts subprocess cold-start from ~10s to ~2s per call by skipping all user MCP servers and settings.
+- **Bounded-concurrency summarization**: parallel summary workers via a fixed-size cursor pool. Default 2; tune with `EPISODIC_MEMORY_CONCURRENCY`.
+- **Smart triviality detection** (`detectTrivial`): conversations that are empty, slash-commands-only, ack-only (`yes`/`no`/`ok`/`thanks`/...), under 500 chars on both sides, or with no assistant output return a canned label without calling the SDK at all. Cuts backlog substantially with zero quota burn.
+- **Resumable failure state** at `<index-dir>/sync-state.json`: tracks per-file attempt count + last error. After 3 consecutive failures a file is marked poison-pill and silently skipped on subsequent runs to stop wasting subscription quota. Reset with `EPISODIC_MEMORY_RETRY_ALL=1` or by deleting the file.
+- **Tiered prompts** by conversation size:
+  - `short` (≤3 exchanges, <2000 chars) → one-line label prompt
+  - `medium` (≤15) → XML-structured `<summary><changes/><decisions/><blockers/></summary>` schema with three real-world few-shot examples
+  - `long` (>15) → hierarchical with shared-rules block and synthesis schema
+  Output format is now grep-friendly and decision-focused.
+- **Embedding-based dedup** (`src/dedup.ts`): after producing a summary, embedding-cosine compared against the newest existing sibling `*-summary.txt` in the same project. Cosine ≥ 0.95 (configurable via `EPISODIC_MEMORY_DEDUP_THRESHOLD`) replaces the new summary with a `Same session as <prev-id>` pointer. Disable with `EPISODIC_MEMORY_DEDUP=0`. Skips chains of pointers to prevent rot.
+- **Resumable hierarchical chunks**: long-conversation chunk summaries persist to `<jsonl>-summary.partial.json` after each chunk. On retry, summarization resumes at the next un-done chunk instead of restarting from chunk 1. Schema-versioned and invalidated on conversation growth or chunk-count change.
+- **Single-subprocess hierarchical pipeline** (`HierarchicalSession`): one isolated CLI subprocess kept alive across all chunks + synthesis of one long conversation, fed via `query({ prompt: AsyncIterable<SDKUserMessage> })`. ~50% faster on long conversations by amortizing one cold-start across N+1 turns. Per-turn timeout aborts the entire session on hang.
+- **Subprocess stderr capture**: SDK `stderr` callback wired into the structured log at debug level — gives live visibility into MCP/auth/network behavior inside the spawned `claude` subprocess.
+
+### New environment variables
+- `EPISODIC_MEMORY_API_TIMEOUT_MS` — per-call SDK timeout in ms (default 180000)
+- `EPISODIC_MEMORY_CONCURRENCY` — parallel summary workers (default 2)
+- `EPISODIC_MEMORY_RETRY_ALL` — reset poison-pill state on the next run
+- `EPISODIC_MEMORY_DEDUP` — set to `0` to disable summary dedup
+- `EPISODIC_MEMORY_DEDUP_THRESHOLD` — cosine cutoff (default 0.95)
+- `EPISODIC_MEMORY_DEBUG` — verbose stderr debug logs
+
+### Tests
+- 26 new tests across `dedup`, `partial`, `summarizer-trivial`, `sync-state`. Total 100/100 passing.
+
 ## [1.0.17] - 2026-04-29
 
 ### Improved

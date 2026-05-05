@@ -2,6 +2,16 @@ import fs from 'fs';
 import path from 'path';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
 import { getExcludedProjects, findJsonlFiles } from './paths.js';
+import { log } from './logger.js';
+import {
+  loadState,
+  saveState,
+  shouldSkipFailed,
+  recordFailure,
+  clearFailure,
+  countSkippedPoisonPills,
+  MAX_ATTEMPTS,
+} from './sync-state.js';
 
 const EXCLUSION_MARKERS = [
   '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
@@ -98,7 +108,7 @@ export async function syncConversations(
 
     const project = projectEntry.name;
     if (excludedProjects.includes(project)) {
-      console.log("\nSkipping excluded project: " + project);
+      log.info("\nSkipping excluded project: " + project);
       continue;
     }
 
@@ -183,37 +193,80 @@ export async function syncConversations(
   if (!options.skipSummaries && filesToSummarize.length > 0) {
     const { parseConversation } = await import('./parser.js');
     const { summarizeConversation } = await import('./summarizer.js');
+    const { dedupAgainstSiblings } = await import('./dedup.js');
+    const { partialPathFor } = await import('./partial.js');
 
-    const summaryLimit = options.summaryLimit ?? 10;
-    const toSummarize = filesToSummarize.slice(0, summaryLimit);
-    const remaining = filesToSummarize.length - toSummarize.length;
-
-    console.log(`Generating summaries for ${toSummarize.length} conversation(s)...`);
-    if (remaining > 0) {
-      console.log(`  (${remaining} more need summaries - will process on next sync)`);
+    const state = loadState();
+    const beforeFilter = filesToSummarize.length;
+    const eligible = filesToSummarize.filter(f => !shouldSkipFailed(state, f.path));
+    const skippedPoison = beforeFilter - eligible.length;
+    if (skippedPoison > 0) {
+      log.info(`Skipping ${skippedPoison} file(s) that exceeded ${MAX_ATTEMPTS} retries (set EPISODIC_MEMORY_RETRY_ALL=1 to retry).`);
     }
 
-    for (const { path: filePath, sessionId } of toSummarize) {
+    const summaryLimit = options.summaryLimit ?? 10;
+    const toSummarize = eligible.slice(0, summaryLimit);
+    const remaining = eligible.length - toSummarize.length;
+
+    const concurrencyRaw = parseInt(process.env.EPISODIC_MEMORY_CONCURRENCY ?? '', 10);
+    const concurrency = Number.isFinite(concurrencyRaw) && concurrencyRaw > 0 ? concurrencyRaw : 2;
+
+    log.info(`Generating summaries for ${toSummarize.length} conversation(s) (concurrency=${concurrency})...`);
+    if (remaining > 0) {
+      log.info(`  (${remaining} more need summaries - will process on next sync)`);
+    }
+
+    async function summarizeOne(filePath: string): Promise<void> {
+      const startedAt = Date.now();
       try {
         const project = path.basename(path.dirname(filePath));
         const exchanges = await parseConversation(filePath, project, filePath);
 
         if (exchanges.length === 0) {
-          continue; // Skip empty conversations
+          return; // Skip empty conversations
         }
 
-        console.log(`  Summarizing ${path.basename(filePath)} (${exchanges.length} exchanges)...`);
-        const summary = await summarizeConversation(exchanges);
+        log.info(`  Summarizing ${path.basename(filePath)} (${exchanges.length} exchanges)...`);
+        const rawSummary = await summarizeConversation(exchanges, {
+          partialPath: partialPathFor(filePath),
+        });
 
         const summaryPath = filePath.replace('.jsonl', '-summary.txt');
+        const { summary, deduped, similarity } = await dedupAgainstSiblings(rawSummary, summaryPath);
+        if (deduped) {
+          log.info(`    deduped ${path.basename(filePath)} (similarity=${similarity?.toFixed(3)})`);
+        }
         fs.writeFileSync(summaryPath, summary, 'utf-8');
         result.summarized++;
+        clearFailure(state, filePath);
+        log.info(`    done ${path.basename(filePath)} in ${Date.now() - startedAt}ms`);
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        recordFailure(state, filePath, msg);
+        const attempts = state.failures[filePath]?.attempts ?? 0;
+        log.warn(`    failed ${path.basename(filePath)} after ${Date.now() - startedAt}ms (attempt ${attempts}/${MAX_ATTEMPTS}): ${msg}`);
         result.errors.push({
           file: filePath,
-          error: `Summary generation failed: ${error instanceof Error ? error.message : String(error)}`
+          error: `Summary generation failed: ${msg}`
         });
       }
+    }
+
+    // Bounded-concurrency pool: each worker pulls next file index until queue drained.
+    let cursor = 0;
+    const queue = toSummarize;
+    const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+      while (true) {
+        const i = cursor++;
+        if (i >= queue.length) return;
+        await summarizeOne(queue[i].path);
+      }
+    });
+    await Promise.all(workers);
+    saveState(state);
+    const poisonCount = countSkippedPoisonPills(state);
+    if (poisonCount > 0) {
+      log.info(`State: ${poisonCount} file(s) recorded as poison-pill (≥${MAX_ATTEMPTS} attempts).`);
     }
   }
 

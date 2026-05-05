@@ -16,6 +16,10 @@ describe('API Configuration', () => {
     process.env.EPISODIC_MEMORY_API_BASE_URL = 'https://httpbin.org/status/418';
     process.env.EPISODIC_MEMORY_API_TOKEN = 'test-token';
 
+    // Note: messages must be substantive enough to bypass detectTrivial()
+    // (combined user/assistant text >= 500 chars each).
+    const longUser = 'Implement JWT authentication with refresh tokens. '.repeat(20);
+    const longAssistant = 'I will create an auth context with token rotation, refresh-on-expiry, and a ProtectedRoute component. '.repeat(20);
     const exchanges: ConversationExchange[] = [
       {
         id: 'test-1',
@@ -24,8 +28,8 @@ describe('API Configuration', () => {
         archivePath: '/test/path.jsonl',
         lineStart: 1,
         lineEnd: 10,
-        userMessage: 'Implement JWT authentication with refresh tokens',
-        assistantMessage: 'I will create an auth context with token rotation...'
+        userMessage: longUser,
+        assistantMessage: longAssistant,
       },
       {
         id: 'test-2',
@@ -34,8 +38,8 @@ describe('API Configuration', () => {
         archivePath: '/test/path.jsonl',
         lineStart: 11,
         lineEnd: 20,
-        userMessage: 'How do protected routes work?',
-        assistantMessage: 'We use a ProtectedRoute component that checks auth...'
+        userMessage: longUser,
+        assistantMessage: longAssistant,
       }
     ];
 

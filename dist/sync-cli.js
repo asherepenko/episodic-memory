@@ -1,5 +1,6 @@
 import { syncConversations } from './sync.js';
 import { getArchiveDir, getConversationSourceDirs } from './paths.js';
+import { closeLog, getLogPath } from './logger.js';
 import { spawn } from 'child_process';
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
@@ -19,6 +20,24 @@ Safe to run multiple times - subsequent runs are fast no-ops.
 OPTIONS:
   --background    Run sync in background (for hooks, returns immediately)
   --limit <n>     Max summaries to generate per run (default: 10)
+
+ENV:
+  EPISODIC_MEMORY_API_TIMEOUT_MS    Per-call Claude SDK timeout (default: 180000)
+  EPISODIC_MEMORY_CONCURRENCY       Parallel summary workers (default: 2)
+  EPISODIC_MEMORY_RETRY_ALL         Set to retry files marked as poison-pill
+  EPISODIC_MEMORY_DEDUP             Set to "0" to disable summary dedup
+  EPISODIC_MEMORY_DEDUP_THRESHOLD   Cosine similarity cutoff (default: 0.95)
+  EPISODIC_MEMORY_DEBUG             Set to any value for verbose stderr debug logs
+
+STATE:
+  Failed-summary attempts tracked in <index-dir>/sync-state.json.
+  After 3 failures a file is skipped on subsequent runs to avoid wasting
+  subscription quota. Set EPISODIC_MEMORY_RETRY_ALL=1 to retry them.
+
+LOGS:
+  All sync activity (start/end/elapsed/errors) is appended to:
+    <index-dir>/sync.log
+  Tail it during sync: tail -f ~/.config/superpowers/conversation-index/sync.log
 
 EXAMPLES:
   # Sync all new conversations
@@ -69,7 +88,8 @@ if (sourceDirs.length === 0) {
 }
 console.log('Syncing conversations...');
 console.log(`Sources: ${sourceDirs.join(', ')}`);
-console.log(`Destination: ${destDir}\n`);
+console.log(`Destination: ${destDir}`);
+console.log(`Log: ${getLogPath()} (tail -f for live progress)\n`);
 async function syncAll() {
     const totals = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [], sourcesWithSummaryWork: 0, totalNeedingSummaries: 0 };
     for (const sourceDir of sourceDirs) {
@@ -96,7 +116,10 @@ async function syncAll() {
         }
     }
 }
-syncAll().catch(error => {
+syncAll()
+    .then(() => closeLog())
+    .catch(error => {
     console.error('Error syncing:', error);
+    closeLog();
     process.exit(1);
 });
