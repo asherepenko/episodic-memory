@@ -1,5 +1,3 @@
-# episodic-memory CLAUDE.md
-
 Semantic search over Claude Code conversations. Forked from obra/episodic-memory.
 
 ## Quick Start
