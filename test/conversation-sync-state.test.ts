@@ -1,0 +1,387 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import {
+  openConversationSyncStateStore,
+  sidecarPathFor,
+  isRetriable,
+  MAX_ATTEMPTS,
+  type SyncState,
+} from '../src/sync/conversation-sync-state.js';
+
+let tmpDir: string;
+let archiveDir: string;
+let jsonl: string;
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'em-css-'));
+  archiveDir = path.join(tmpDir, 'archive');
+  fs.mkdirSync(archiveDir, { recursive: true });
+  jsonl = path.join(archiveDir, 'project-x', 'session-abc.jsonl');
+  fs.mkdirSync(path.dirname(jsonl), { recursive: true });
+  process.env.EPISODIC_MEMORY_CONFIG_DIR = tmpDir;
+  delete process.env.EPISODIC_MEMORY_RETRY_ALL;
+});
+
+afterEach(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  delete process.env.EPISODIC_MEMORY_CONFIG_DIR;
+  delete process.env.EPISODIC_MEMORY_RETRY_ALL;
+});
+
+describe('conversation-sync-state: pending + state-machine basics', () => {
+  it('returns pending when no sidecar, partial, summary, or global state exists', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+  });
+
+  it('sidecarPathFor swaps .jsonl for .sync.json', () => {
+    expect(sidecarPathFor(jsonl)).toBe(
+      path.join(archiveDir, 'project-x', 'session-abc.sync.json')
+    );
+  });
+
+  it('round-trips inProgress state', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state: SyncState = {
+      kind: 'inProgress',
+      chunkSummaries: ['c1', 'c2'],
+      totalChunks: 5,
+      totalExchanges: 42,
+      lastUpdated: '2026-05-05T13:22:53Z',
+    };
+    store.save(jsonl, state);
+    expect(store.load(jsonl)).toEqual(state);
+  });
+
+  it('round-trips complete state', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state: SyncState = { kind: 'complete', lastUpdated: '2026-05-05T13:22:53Z' };
+    store.save(jsonl, state);
+    expect(store.load(jsonl)).toEqual(state);
+  });
+
+  it('round-trips stale state', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state: SyncState = { kind: 'stale', lastUpdated: '2026-05-05T13:22:53Z' };
+    store.save(jsonl, state);
+    expect(store.load(jsonl)).toEqual(state);
+  });
+
+  it('round-trips poison state', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state: SyncState = {
+      kind: 'poison',
+      attempts: 2,
+      lastError: 'timeout',
+      lastAttempt: '2026-05-05T13:22:53Z',
+    };
+    store.save(jsonl, state);
+    expect(store.load(jsonl)).toEqual(state);
+  });
+
+  it('markStale transitions complete to stale', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    store.save(jsonl, { kind: 'complete', lastUpdated: '2026-05-05T00:00:00Z' });
+    store.markStale(jsonl);
+    const after = store.load(jsonl);
+    expect(after.kind).toBe('stale');
+  });
+
+  it('markStale is a no-op for pending', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    store.markStale(jsonl);
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+  });
+
+  it('markStale is a no-op for inProgress', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const inProgress: SyncState = {
+      kind: 'inProgress',
+      chunkSummaries: ['x'],
+      totalChunks: 3,
+      totalExchanges: 10,
+      lastUpdated: '2026-05-05T00:00:00Z',
+    };
+    store.save(jsonl, inProgress);
+    store.markStale(jsonl);
+    expect(store.load(jsonl)).toEqual(inProgress);
+  });
+
+  it('markStale is a no-op for poison', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const poison: SyncState = {
+      kind: 'poison',
+      attempts: 1,
+      lastError: 'boom',
+      lastAttempt: '2026-05-05T00:00:00Z',
+    };
+    store.save(jsonl, poison);
+    store.markStale(jsonl);
+    expect(store.load(jsonl)).toEqual(poison);
+  });
+});
+
+describe('conversation-sync-state: schema validation + atomicity', () => {
+  it('returns pending on corrupt JSON', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    fs.writeFileSync(sidecarPathFor(jsonl), '{not json');
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+  });
+
+  it('returns pending on unknown version', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    fs.writeFileSync(
+      sidecarPathFor(jsonl),
+      JSON.stringify({ version: 999, kind: 'complete', lastUpdated: 'x' })
+    );
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+  });
+
+  it('returns pending when kind missing', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    fs.writeFileSync(
+      sidecarPathFor(jsonl),
+      JSON.stringify({ version: 2, lastUpdated: 'x' })
+    );
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+  });
+
+  it('returns pending when only the .tmp file exists (mid-write crash)', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const sidecar = sidecarPathFor(jsonl);
+    fs.writeFileSync(
+      sidecar + '.tmp',
+      JSON.stringify({ version: 2, kind: 'complete', lastUpdated: 'x' })
+    );
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+  });
+});
+
+describe('conversation-sync-state: failure tracking + poison', () => {
+  it('recordFailure once yields poison kind, attempts=1, retriable', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const next = store.recordFailure(jsonl, 'timeout');
+    expect(next.kind).toBe('poison');
+    if (next.kind !== 'poison') throw new Error('unreachable');
+    expect(next.attempts).toBe(1);
+    expect(next.lastError).toBe('timeout');
+    expect(isRetriable(next)).toBe(true);
+  });
+
+  it('recordFailure MAX_ATTEMPTS times yields non-retriable', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    let last: SyncState = { kind: 'pending' };
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      last = store.recordFailure(jsonl, 'timeout');
+    }
+    expect(last.kind).toBe('poison');
+    if (last.kind !== 'poison') throw new Error('unreachable');
+    expect(last.attempts).toBe(MAX_ATTEMPTS);
+    expect(isRetriable(last)).toBe(false);
+  });
+
+  it('clearFailure deletes sidecar and load returns pending', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    store.recordFailure(jsonl, 'timeout');
+    expect(fs.existsSync(sidecarPathFor(jsonl))).toBe(true);
+    store.clearFailure(jsonl);
+    expect(fs.existsSync(sidecarPathFor(jsonl))).toBe(false);
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+  });
+
+  it('clearFailure is a no-op when no sidecar exists', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    expect(() => store.clearFailure(jsonl)).not.toThrow();
+  });
+
+  it('clearFailure leaves non-poison sidecar untouched', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    const complete: SyncState = { kind: 'complete', lastUpdated: '2026-05-05T00:00:00Z' };
+    store.save(jsonl, complete);
+    store.clearFailure(jsonl);
+    expect(store.load(jsonl)).toEqual(complete);
+  });
+
+  it('EPISODIC_MEMORY_RETRY_ALL=1 makes load return pending without rewriting sidecar', () => {
+    const store = openConversationSyncStateStore({ archiveDir });
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      store.recordFailure(jsonl, 'timeout');
+    }
+    const sidecar = sidecarPathFor(jsonl);
+    const onDiskBefore = fs.readFileSync(sidecar, 'utf-8');
+
+    process.env.EPISODIC_MEMORY_RETRY_ALL = '1';
+    expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+
+    const onDiskAfter = fs.readFileSync(sidecar, 'utf-8');
+    expect(onDiskAfter).toBe(onDiskBefore);
+  });
+});
+
+describe('conversation-sync-state: lazy migration', () => {
+  it('migrates legacy -summary.partial.json to inProgress', () => {
+    const partialPath = jsonl.replace(/\.jsonl$/, '-summary.partial.json');
+    fs.writeFileSync(partialPath, JSON.stringify({
+      version: 1,
+      totalChunks: 5,
+      chunkSummaries: ['c1', 'c2'],
+      totalExchanges: 42,
+      lastUpdated: '2026-05-05T00:00:00Z',
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state).toEqual({
+      kind: 'inProgress',
+      chunkSummaries: ['c1', 'c2'],
+      totalChunks: 5,
+      totalExchanges: 42,
+      lastUpdated: '2026-05-05T00:00:00Z',
+    });
+
+    expect(fs.existsSync(sidecarPathFor(jsonl))).toBe(true);
+    expect(fs.existsSync(partialPath)).toBe(true);
+  });
+
+  it('migrates legacy global sync-state.json failure to poison', () => {
+    const indexDir = path.join(tmpDir, 'conversation-index');
+    fs.mkdirSync(indexDir, { recursive: true });
+    fs.writeFileSync(path.join(indexDir, 'sync-state.json'), JSON.stringify({
+      failures: {
+        [jsonl]: {
+          attempts: 3,
+          lastError: 'rate-limit',
+          lastAttempt: '2026-05-05T01:00:00Z',
+        },
+      },
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state).toEqual({
+      kind: 'poison',
+      attempts: 3,
+      lastError: 'rate-limit',
+      lastAttempt: '2026-05-05T01:00:00Z',
+    });
+    expect(fs.existsSync(sidecarPathFor(jsonl))).toBe(true);
+  });
+
+  it('migrates legacy global sync-state.json with attempts < MAX_ATTEMPTS to poison kind', () => {
+    const indexDir = path.join(tmpDir, 'conversation-index');
+    fs.mkdirSync(indexDir, { recursive: true });
+    fs.writeFileSync(path.join(indexDir, 'sync-state.json'), JSON.stringify({
+      failures: {
+        [jsonl]: {
+          attempts: 1,
+          lastError: 'oops',
+          lastAttempt: '2026-05-05T01:00:00Z',
+        },
+      },
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state.kind).toBe('poison');
+    if (state.kind !== 'poison') throw new Error('unreachable');
+    expect(state.attempts).toBe(1);
+    expect(isRetriable(state)).toBe(true);
+  });
+
+  it('migrates -summary.txt presence to complete with mtime', () => {
+    const summaryPath = jsonl.replace(/\.jsonl$/, '-summary.txt');
+    fs.writeFileSync(summaryPath, 'a summary');
+    const mtime = new Date('2026-04-04T04:04:04Z');
+    fs.utimesSync(summaryPath, mtime, mtime);
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const state = store.load(jsonl);
+    expect(state.kind).toBe('complete');
+    if (state.kind !== 'complete') throw new Error('unreachable');
+    expect(new Date(state.lastUpdated).toISOString()).toBe(mtime.toISOString());
+    expect(fs.existsSync(sidecarPathFor(jsonl))).toBe(true);
+  });
+
+  it('migration is idempotent: second load reads sidecar (delete legacy in between)', () => {
+    const partialPath = jsonl.replace(/\.jsonl$/, '-summary.partial.json');
+    fs.writeFileSync(partialPath, JSON.stringify({
+      version: 1,
+      totalChunks: 5,
+      chunkSummaries: ['c1'],
+      totalExchanges: 10,
+      lastUpdated: '2026-05-05T00:00:00Z',
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    const first = store.load(jsonl);
+
+    fs.unlinkSync(partialPath);
+
+    const second = store.load(jsonl);
+    expect(second).toEqual(first);
+  });
+
+  it('partial takes precedence over global failure', () => {
+    const partialPath = jsonl.replace(/\.jsonl$/, '-summary.partial.json');
+    fs.writeFileSync(partialPath, JSON.stringify({
+      version: 1,
+      totalChunks: 3,
+      chunkSummaries: ['c1'],
+      totalExchanges: 9,
+      lastUpdated: '2026-05-05T00:00:00Z',
+    }));
+
+    const indexDir = path.join(tmpDir, 'conversation-index');
+    fs.mkdirSync(indexDir, { recursive: true });
+    fs.writeFileSync(path.join(indexDir, 'sync-state.json'), JSON.stringify({
+      failures: {
+        [jsonl]: { attempts: 3, lastError: 'x', lastAttempt: 'x' },
+      },
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    expect(store.load(jsonl).kind).toBe('inProgress');
+  });
+
+  it('global failure takes precedence over -summary.txt presence', () => {
+    fs.writeFileSync(jsonl.replace(/\.jsonl$/, '-summary.txt'), 'summary');
+
+    const indexDir = path.join(tmpDir, 'conversation-index');
+    fs.mkdirSync(indexDir, { recursive: true });
+    fs.writeFileSync(path.join(indexDir, 'sync-state.json'), JSON.stringify({
+      failures: {
+        [jsonl]: { attempts: 3, lastError: 'x', lastAttempt: '2026-05-05T00:00:00Z' },
+      },
+    }));
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    expect(store.load(jsonl).kind).toBe('poison');
+  });
+});
+
+describe('conversation-sync-state: countPoison', () => {
+  it('counts only sidecars with kind=poison and attempts >= MAX_ATTEMPTS', () => {
+    const a = path.join(archiveDir, 'p1', 'a.jsonl');
+    const b = path.join(archiveDir, 'p2', 'b.jsonl');
+    const c = path.join(archiveDir, 'p2', 'c.jsonl');
+    const d = path.join(archiveDir, 'p3', 'd.jsonl');
+    for (const f of [a, b, c, d]) fs.mkdirSync(path.dirname(f), { recursive: true });
+
+    const store = openConversationSyncStateStore({ archiveDir });
+    store.save(a, { kind: 'poison', attempts: MAX_ATTEMPTS, lastError: 'x', lastAttempt: 'x' });
+    store.save(b, { kind: 'poison', attempts: MAX_ATTEMPTS + 1, lastError: 'x', lastAttempt: 'x' });
+    store.save(c, { kind: 'poison', attempts: 1, lastError: 'x', lastAttempt: 'x' });
+    store.save(d, { kind: 'complete', lastUpdated: 'x' });
+
+    expect(store.countPoison()).toBe(2);
+  });
+
+  it('returns 0 for empty archive', () => {
+    const empty = path.join(tmpDir, 'empty-archive');
+    fs.mkdirSync(empty, { recursive: true });
+    const store = openConversationSyncStateStore({ archiveDir: empty });
+    expect(store.countPoison()).toBe(0);
+  });
+});
