@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-05
+
+### Changed
+- **Sync state machine unified into `ConversationSyncState`**: replaces the legacy global `<index>/sync-state.json` (failure tracking) and per-conversation `<conv>-summary.partial.json` (resumable chunks) with a single per-conversation sidecar `<conv>.sync.json` adjacent to the archived `.jsonl`. Sidecars are schema-versioned (`version: 2`), discriminated by `kind`, and written atomically via tmp+rename. Public `syncConversations` API and `SyncResult` shape are unchanged.
+- **Sync code colocated under `src/sync/`**: `src/sync.ts` → `src/sync/sync.ts`, plus the new `src/sync/conversation-sync-state.ts` module and an `src/sync/index.ts` barrel re-exporting the public sync API.
+- **`-summary.txt` write is now atomic** (tmp+rename) so a crash mid-write no longer leaves a truncated summary that the sidecar could otherwise promote to `complete` on the next run.
+
+### Added
+- **`Stale` state for re-summarization**: when `copyIfNewer` overwrites an archived `.jsonl`, the existing sidecar transitions `Complete → Stale`, and the next sync run treats it like a `Pending`/`InProgress` file and re-summarizes. Conversations with a pre-existing stale `-summary.txt` (mtime older than the source jsonl) are also detected on first migration and queued for re-summary instead of being permanently locked into `Complete`. **Heads-up**: on the first sync after upgrade, users with stale summaries on disk may see additional summarizer API calls (and quota burn) until those conversations re-summarize once.
+- **In-memory `ConversationSyncStateStore` adapter** (`openMemoryConversationSyncStateStore`) backed by `Map<string, SyncState>`. Same interface as the filesystem adapter, no fs I/O, no migration. Used by unit tests; available for embedders that don't want to touch disk.
+- **Lazy migration from legacy artifacts**: on first `load()` for a conversation with no sidecar, the store consults legacy `<conv>-summary.partial.json` (→ `inProgress`), then legacy `<index>/sync-state.json` failures (→ `poison`), then `<conv>-summary.txt` mtime vs source jsonl mtime (→ `complete` or `stale`), and writes a fresh sidecar. Legacy files are not deleted; users may clean them up manually.
+- **`EPISODIC_MEMORY_RETRY_ALL` honored at first migration**: when set, legacy global poison entries no longer get baked into a fresh poison sidecar — `load` returns `pending`, and the legacy state remains consultable on the next run.
+- **Corrupt or future-version sidecars no longer fall through to migration**: invalid sidecars now return `pending` without re-migrating from legacy artifacts and without overwriting the bad sidecar. Bad sidecar bytes are preserved on disk for diagnostics.
+- **`CONTEXT.md`** at the repo root: domain glossary defining `Conversation`, `Exchange`, `Project`, `Summary`, `Dedup pointer`, `SyncState`, `Skipped`, `Archive`, `Index`, `Sidecar`. Used by code review and architecture skills to keep terminology stable across sessions.
+
+### Removed
+- `src/sync-state.ts` and `src/partial.ts` deleted; their behavior is now owned by `ConversationSyncState`. Their tests (`test/sync-state.test.ts`, `test/partial.test.ts`) replaced by `test/conversation-sync-state.test.ts` (50 tests covering both filesystem and in-memory adapters, schema validation, lazy migration, RETRY_ALL semantics, atomic writes, and Stale-on-overwrite).
+
+### Tests
+- 150/150 passing (was 100 in 1.1.0; was 114 before this refactor).
+
 ## [1.1.1] - 2026-05-05
 
 ### Changed
