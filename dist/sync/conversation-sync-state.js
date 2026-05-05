@@ -153,7 +153,7 @@ function readLegacyPartial(jsonlPath) {
 }
 function readLegacySummary(jsonlPath) {
     try {
-        const stat = fs.statSync(legacySummaryPathFor(jsonlPath));
+        const stat = fs.lstatSync(legacySummaryPathFor(jsonlPath));
         return { kind: 'complete', lastUpdated: stat.mtime.toISOString() };
     }
     catch {

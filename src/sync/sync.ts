@@ -253,7 +253,9 @@ export async function syncConversations(
         if (deduped) {
           log.info(`    deduped ${path.basename(filePath)} (similarity=${similarity?.toFixed(3)})`);
         }
-        fs.writeFileSync(summaryPath, summary, 'utf-8');
+        const tmpSummaryPath = `${summaryPath}.tmp.${process.pid}`;
+        fs.writeFileSync(tmpSummaryPath, summary, 'utf-8');
+        fs.renameSync(tmpSummaryPath, summaryPath);
         result.summarized++;
         store.clearFailure(filePath);
         store.save(filePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
