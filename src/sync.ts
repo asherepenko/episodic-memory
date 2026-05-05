@@ -4,14 +4,10 @@ import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
 import { getExcludedProjects, findJsonlFiles } from './paths.js';
 import { log } from './logger.js';
 import {
-  loadState,
-  saveState,
-  shouldSkipFailed,
-  recordFailure,
-  clearFailure,
-  countSkippedPoisonPills,
+  openConversationSyncStateStore,
+  isRetriable,
   MAX_ATTEMPTS,
-} from './sync-state.js';
+} from './sync/conversation-sync-state.js';
 
 const EXCLUSION_MARKERS = [
   '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
@@ -94,6 +90,8 @@ export async function syncConversations(
     return result;
   }
 
+  const store = openConversationSyncStateStore();
+
   // Collect files to index and summarize
   const filesToIndex: string[] = [];
   const filesToSummarize: Array<{ path: string; sessionId: string }> = [];
@@ -125,14 +123,15 @@ export async function syncConversations(
         if (wasCopied) {
           result.copied++;
           filesToIndex.push(destFile);
+          store.markStale(destFile);
         } else {
           result.skipped++;
         }
 
         // Check if this file needs a summary (whether newly copied or existing)
-        if (!options.skipSummaries) {
-          const summaryPath = destFile.replace('.jsonl', '-summary.txt');
-          if (!fs.existsSync(summaryPath) && !shouldSkipConversation(destFile)) {
+        if (!options.skipSummaries && !shouldSkipConversation(destFile)) {
+          const s = store.load(destFile);
+          if (s.kind !== 'complete') {
             const sessionId = extractSessionIdFromPath(destFile);
             if (sessionId) {
               filesToSummarize.push({ path: destFile, sessionId });
@@ -194,11 +193,12 @@ export async function syncConversations(
     const { parseConversation } = await import('./parser.js');
     const { summarizeConversation } = await import('./summarizer.js');
     const { dedupAgainstSiblings } = await import('./dedup.js');
-    const { partialPathFor } = await import('./partial.js');
 
-    const state = loadState();
     const beforeFilter = filesToSummarize.length;
-    const eligible = filesToSummarize.filter(f => !shouldSkipFailed(state, f.path));
+    const eligible = filesToSummarize.filter(f => {
+      const s = store.load(f.path);
+      return s.kind !== 'poison' || isRetriable(s);
+    });
     const skippedPoison = beforeFilter - eligible.length;
     if (skippedPoison > 0) {
       log.info(`Skipping ${skippedPoison} file(s) that exceeded ${MAX_ATTEMPTS} retries (set EPISODIC_MEMORY_RETRY_ALL=1 to retry).`);
@@ -226,9 +226,26 @@ export async function syncConversations(
           return; // Skip empty conversations
         }
 
+        // Only resume chunks if exchange count still matches; otherwise the
+        // conversation grew/shrank and cached chunks are stale.
+        const pre = store.load(filePath);
+        const initialChunkSummaries =
+          pre.kind === 'inProgress' && pre.totalExchanges === exchanges.length
+            ? pre.chunkSummaries
+            : [];
+
         log.info(`  Summarizing ${path.basename(filePath)} (${exchanges.length} exchanges)...`);
         const rawSummary = await summarizeConversation(exchanges, {
-          partialPath: partialPathFor(filePath),
+          initialChunkSummaries,
+          onChunkComplete: (chunkSummaries, totalChunks, totalExchanges) => {
+            store.save(filePath, {
+              kind: 'inProgress',
+              chunkSummaries,
+              totalChunks,
+              totalExchanges,
+              lastUpdated: new Date().toISOString(),
+            });
+          },
         });
 
         const summaryPath = filePath.replace('.jsonl', '-summary.txt');
@@ -238,12 +255,13 @@ export async function syncConversations(
         }
         fs.writeFileSync(summaryPath, summary, 'utf-8');
         result.summarized++;
-        clearFailure(state, filePath);
+        store.clearFailure(filePath);
+        store.save(filePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
         log.info(`    done ${path.basename(filePath)} in ${Date.now() - startedAt}ms`);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        recordFailure(state, filePath, msg);
-        const attempts = state.failures[filePath]?.attempts ?? 0;
+        const newState = store.recordFailure(filePath, msg);
+        const attempts = newState.kind === 'poison' ? newState.attempts : 0;
         log.warn(`    failed ${path.basename(filePath)} after ${Date.now() - startedAt}ms (attempt ${attempts}/${MAX_ATTEMPTS}): ${msg}`);
         result.errors.push({
           file: filePath,
@@ -263,8 +281,7 @@ export async function syncConversations(
       }
     });
     await Promise.all(workers);
-    saveState(state);
-    const poisonCount = countSkippedPoisonPills(state);
+    const poisonCount = store.countPoison();
     if (poisonCount > 0) {
       log.info(`State: ${poisonCount} file(s) recorded as poison-pill (≥${MAX_ATTEMPTS} attempts).`);
     }
