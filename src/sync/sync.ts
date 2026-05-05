@@ -1,13 +1,13 @@
 import fs from 'fs';
 import path from 'path';
-import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { getExcludedProjects, findJsonlFiles } from './paths.js';
-import { log } from './logger.js';
+import { SUMMARIZER_CONTEXT_MARKER } from '../constants.js';
+import { getExcludedProjects, findJsonlFiles } from '../paths.js';
+import { log } from '../logger.js';
 import {
   openConversationSyncStateStore,
   isRetriable,
   MAX_ATTEMPTS,
-} from './sync/conversation-sync-state.js';
+} from './conversation-sync-state.js';
 
 const EXCLUSION_MARKERS = [
   '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
@@ -149,9 +149,9 @@ export async function syncConversations(
 
   // Index copied files (unless skipIndex is set)
   if (!options.skipIndex && filesToIndex.length > 0) {
-    const { initDatabase, insertExchange } = await import('./db.js');
-    const { initEmbeddings, generateExchangeEmbedding } = await import('./embeddings.js');
-    const { parseConversation } = await import('./parser.js');
+    const { initDatabase, insertExchange } = await import('../db.js');
+    const { initEmbeddings, generateExchangeEmbedding } = await import('../embeddings.js');
+    const { parseConversation } = await import('../parser.js');
 
     const db = initDatabase();
     await initEmbeddings();
@@ -190,9 +190,9 @@ export async function syncConversations(
 
   // Generate summaries for files that need them
   if (!options.skipSummaries && filesToSummarize.length > 0) {
-    const { parseConversation } = await import('./parser.js');
-    const { summarizeConversation } = await import('./summarizer.js');
-    const { dedupAgainstSiblings } = await import('./dedup.js');
+    const { parseConversation } = await import('../parser.js');
+    const { summarizeConversation } = await import('../summarizer.js');
+    const { dedupAgainstSiblings } = await import('../dedup.js');
 
     const beforeFilter = filesToSummarize.length;
     const eligible = filesToSummarize.filter(f => {

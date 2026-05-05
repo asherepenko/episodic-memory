@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { getExcludedProjects, findJsonlFiles } from './paths.js';
-import { log } from './logger.js';
-import { openConversationSyncStateStore, isRetriable, MAX_ATTEMPTS, } from './sync/conversation-sync-state.js';
+import { SUMMARIZER_CONTEXT_MARKER } from '../constants.js';
+import { getExcludedProjects, findJsonlFiles } from '../paths.js';
+import { log } from '../logger.js';
+import { openConversationSyncStateStore, isRetriable, MAX_ATTEMPTS, } from './conversation-sync-state.js';
 const EXCLUSION_MARKERS = [
     '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
     'Only use NO_INSIGHTS_FOUND',
@@ -112,9 +112,9 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
     }
     // Index copied files (unless skipIndex is set)
     if (!options.skipIndex && filesToIndex.length > 0) {
-        const { initDatabase, insertExchange } = await import('./db.js');
-        const { initEmbeddings, generateExchangeEmbedding } = await import('./embeddings.js');
-        const { parseConversation } = await import('./parser.js');
+        const { initDatabase, insertExchange } = await import('../db.js');
+        const { initEmbeddings, generateExchangeEmbedding } = await import('../embeddings.js');
+        const { parseConversation } = await import('../parser.js');
         const db = initDatabase();
         await initEmbeddings();
         for (const file of filesToIndex) {
@@ -143,9 +143,9 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
     }
     // Generate summaries for files that need them
     if (!options.skipSummaries && filesToSummarize.length > 0) {
-        const { parseConversation } = await import('./parser.js');
-        const { summarizeConversation } = await import('./summarizer.js');
-        const { dedupAgainstSiblings } = await import('./dedup.js');
+        const { parseConversation } = await import('../parser.js');
+        const { summarizeConversation } = await import('../summarizer.js');
+        const { dedupAgainstSiblings } = await import('../dedup.js');
         const beforeFilter = filesToSummarize.length;
         const eligible = filesToSummarize.filter(f => {
             const s = store.load(f.path);

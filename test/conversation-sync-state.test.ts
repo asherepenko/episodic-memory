@@ -4,9 +4,11 @@ import os from 'os';
 import path from 'path';
 import {
   openConversationSyncStateStore,
+  openMemoryConversationSyncStateStore,
   sidecarPathFor,
   isRetriable,
   MAX_ATTEMPTS,
+  type ConversationSyncStateStore,
   type SyncState,
 } from '../src/sync/conversation-sync-state.js';
 
@@ -385,3 +387,150 @@ describe('conversation-sync-state: countPoison', () => {
     expect(store.countPoison()).toBe(0);
   });
 });
+
+// Parameterised: state-machine behaviour must match across adapters.
+// Filesystem-only concerns (sidecar I/O, atomicity, on-disk schema, lazy
+// migration) stay in the dedicated describe blocks above.
+const adapters: Array<{ name: string; open: () => ConversationSyncStateStore }> = [
+  { name: 'filesystem', open: () => openConversationSyncStateStore({ archiveDir }) },
+  { name: 'memory', open: () => openMemoryConversationSyncStateStore() },
+];
+
+for (const adapter of adapters) {
+  describe(`conversation-sync-state [${adapter.name}]: state-machine parity`, () => {
+    it('returns pending for unknown path', () => {
+      const store = adapter.open();
+      expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+    });
+
+    it('round-trips inProgress state', () => {
+      const store = adapter.open();
+      const state: SyncState = {
+        kind: 'inProgress',
+        chunkSummaries: ['c1', 'c2'],
+        totalChunks: 5,
+        totalExchanges: 42,
+        lastUpdated: '2026-05-05T13:22:53Z',
+      };
+      store.save(jsonl, state);
+      expect(store.load(jsonl)).toEqual(state);
+    });
+
+    it('round-trips complete state', () => {
+      const store = adapter.open();
+      const state: SyncState = { kind: 'complete', lastUpdated: '2026-05-05T13:22:53Z' };
+      store.save(jsonl, state);
+      expect(store.load(jsonl)).toEqual(state);
+    });
+
+    it('markStale transitions complete to stale', () => {
+      const store = adapter.open();
+      store.save(jsonl, { kind: 'complete', lastUpdated: '2026-05-05T00:00:00Z' });
+      store.markStale(jsonl);
+      expect(store.load(jsonl).kind).toBe('stale');
+    });
+
+    it('markStale is a no-op for pending', () => {
+      const store = adapter.open();
+      store.markStale(jsonl);
+      expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+    });
+
+    it('markStale is a no-op for inProgress', () => {
+      const store = adapter.open();
+      const inProgress: SyncState = {
+        kind: 'inProgress',
+        chunkSummaries: ['x'],
+        totalChunks: 3,
+        totalExchanges: 10,
+        lastUpdated: '2026-05-05T00:00:00Z',
+      };
+      store.save(jsonl, inProgress);
+      store.markStale(jsonl);
+      expect(store.load(jsonl)).toEqual(inProgress);
+    });
+
+    it('markStale is a no-op for poison', () => {
+      const store = adapter.open();
+      const poison: SyncState = {
+        kind: 'poison',
+        attempts: 1,
+        lastError: 'boom',
+        lastAttempt: '2026-05-05T00:00:00Z',
+      };
+      store.save(jsonl, poison);
+      store.markStale(jsonl);
+      expect(store.load(jsonl)).toEqual(poison);
+    });
+
+    it('recordFailure once yields poison kind, attempts=1, retriable', () => {
+      const store = adapter.open();
+      const next = store.recordFailure(jsonl, 'timeout');
+      expect(next.kind).toBe('poison');
+      if (next.kind !== 'poison') throw new Error('unreachable');
+      expect(next.attempts).toBe(1);
+      expect(next.lastError).toBe('timeout');
+      expect(isRetriable(next)).toBe(true);
+    });
+
+    it('recordFailure MAX_ATTEMPTS times yields non-retriable', () => {
+      const store = adapter.open();
+      let last: SyncState = { kind: 'pending' };
+      for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        last = store.recordFailure(jsonl, 'timeout');
+      }
+      expect(last.kind).toBe('poison');
+      if (last.kind !== 'poison') throw new Error('unreachable');
+      expect(last.attempts).toBe(MAX_ATTEMPTS);
+      expect(isRetriable(last)).toBe(false);
+    });
+
+    it('clearFailure removes poison and load returns pending', () => {
+      const store = adapter.open();
+      store.recordFailure(jsonl, 'timeout');
+      store.clearFailure(jsonl);
+      expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+    });
+
+    it('clearFailure is a no-op when no state exists', () => {
+      const store = adapter.open();
+      expect(() => store.clearFailure(jsonl)).not.toThrow();
+    });
+
+    it('clearFailure leaves non-poison state untouched', () => {
+      const store = adapter.open();
+      const complete: SyncState = { kind: 'complete', lastUpdated: '2026-05-05T00:00:00Z' };
+      store.save(jsonl, complete);
+      store.clearFailure(jsonl);
+      expect(store.load(jsonl)).toEqual(complete);
+    });
+
+    it('EPISODIC_MEMORY_RETRY_ALL=1 makes load return pending without mutating storage', () => {
+      const store = adapter.open();
+      for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        store.recordFailure(jsonl, 'timeout');
+      }
+      process.env.EPISODIC_MEMORY_RETRY_ALL = '1';
+      expect(store.load(jsonl)).toEqual({ kind: 'pending' });
+      delete process.env.EPISODIC_MEMORY_RETRY_ALL;
+      const after = store.load(jsonl);
+      expect(after.kind).toBe('poison');
+      if (after.kind !== 'poison') throw new Error('unreachable');
+      expect(after.attempts).toBe(MAX_ATTEMPTS);
+    });
+
+    it('countPoison counts only entries with attempts >= MAX_ATTEMPTS', () => {
+      const store = adapter.open();
+      const a = path.join(archiveDir, 'p1', 'a.jsonl');
+      const b = path.join(archiveDir, 'p2', 'b.jsonl');
+      const c = path.join(archiveDir, 'p2', 'c.jsonl');
+      const d = path.join(archiveDir, 'p3', 'd.jsonl');
+      for (const f of [a, b, c, d]) fs.mkdirSync(path.dirname(f), { recursive: true });
+      store.save(a, { kind: 'poison', attempts: MAX_ATTEMPTS, lastError: 'x', lastAttempt: 'x' });
+      store.save(b, { kind: 'poison', attempts: MAX_ATTEMPTS + 1, lastError: 'x', lastAttempt: 'x' });
+      store.save(c, { kind: 'poison', attempts: 1, lastError: 'x', lastAttempt: 'x' });
+      store.save(d, { kind: 'complete', lastUpdated: 'x' });
+      expect(store.countPoison()).toBe(2);
+    });
+  });
+}

@@ -46,3 +46,4 @@ export declare function isRetriable(state: SyncState): boolean;
 export declare function openConversationSyncStateStore(opts?: {
     archiveDir?: string;
 }): ConversationSyncStateStore;
+export declare function openMemoryConversationSyncStateStore(): ConversationSyncStateStore;

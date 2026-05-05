@@ -272,3 +272,51 @@ export function openConversationSyncStateStore(opts) {
     };
     return { load, save, recordFailure, clearFailure, markStale, countPoison };
 }
+export function openMemoryConversationSyncStateStore() {
+    const map = new Map();
+    const load = (jsonlPath) => {
+        const current = map.get(jsonlPath) ?? { kind: 'pending' };
+        // Mirror filesystem store: retry-all masks poison without mutating storage.
+        if (process.env.EPISODIC_MEMORY_RETRY_ALL && current.kind === 'poison') {
+            return { kind: 'pending' };
+        }
+        return current;
+    };
+    const save = (jsonlPath, next) => {
+        map.set(jsonlPath, next);
+    };
+    const recordFailure = (jsonlPath, error) => {
+        const current = map.get(jsonlPath) ?? { kind: 'pending' };
+        const prevAttempts = current.kind === 'poison' ? current.attempts : 0;
+        const next = {
+            kind: 'poison',
+            attempts: prevAttempts + 1,
+            lastError: error,
+            lastAttempt: new Date().toISOString(),
+        };
+        map.set(jsonlPath, next);
+        return next;
+    };
+    const clearFailure = (jsonlPath) => {
+        const current = map.get(jsonlPath);
+        if (current?.kind === 'poison') {
+            map.delete(jsonlPath);
+        }
+    };
+    const markStale = (jsonlPath) => {
+        const current = map.get(jsonlPath) ?? { kind: 'pending' };
+        if (current.kind === 'complete') {
+            map.set(jsonlPath, { kind: 'stale', lastUpdated: new Date().toISOString() });
+        }
+    };
+    const countPoison = () => {
+        let count = 0;
+        for (const state of map.values()) {
+            if (state.kind === 'poison' && state.attempts >= MAX_ATTEMPTS) {
+                count++;
+            }
+        }
+        return count;
+    };
+    return { load, save, recordFailure, clearFailure, markStale, countPoison };
+}

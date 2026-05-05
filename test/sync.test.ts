@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, utimesSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { syncConversations } from '../src/sync.js';
+import { syncConversations } from '../src/sync/index.js';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 

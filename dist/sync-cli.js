@@ -1,4 +1,4 @@
-import { syncConversations } from './sync.js';
+import { syncConversations } from './sync/index.js';
 import { getArchiveDir, getConversationSourceDirs } from './paths.js';
 import { closeLog, getLogPath } from './logger.js';
 import { spawn } from 'child_process';
