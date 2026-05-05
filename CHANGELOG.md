@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-05-05
+
+### Fixed
+- **MCP server failed to start after 1.1.1**: `.claude-plugin/plugin.json` referenced `cli/mcp-server-wrapper.js`, which was removed during the TS migration (the surviving shim is `cli/mcp-server`, extensionless). The MCP launcher hit ENOENT and the plugin could not connect. Pointed `mcpServers.episodic-memory.args` at the compiled `dist/cli/mcp-server-wrapper.js` directly.
+
 ## [1.2.0] - 2026-05-05
 
 ### Changed
