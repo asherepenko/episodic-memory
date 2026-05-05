@@ -2,6 +2,13 @@ export declare const BGE_QUERY_PREFIX = "Represent this sentence for searching r
 export declare function initEmbeddings(): Promise<void>;
 export declare function generateEmbedding(text: string): Promise<number[]>;
 /**
+ * Cosine similarity between two embeddings produced by `generateEmbedding`.
+ * Both vectors are L2-normalized at extraction time (normalize: true above),
+ * so cosine collapses to the dot product — keep this in sync if pooling
+ * changes.
+ */
+export declare function cosineSimilarity(a: number[], b: number[]): number;
+/**
  * Prepend the BGE retrieval prefix to a query string. Idempotent: returns
  * the input unchanged if the prefix is already present.
  */

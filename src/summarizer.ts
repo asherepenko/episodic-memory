@@ -30,23 +30,32 @@ export class SummarizerTimeoutError extends Error {
  * - EPISODIC_MEMORY_API_TOKEN: Auth token for custom endpoint
  * - EPISODIC_MEMORY_API_TIMEOUT_MS: Timeout for API calls (default: SDK default)
  */
+let cachedApiEnv: Record<string, string | undefined> | null = null;
+let cachedApiEnvKey = '';
+
 export function getApiEnv(): Record<string, string | undefined> | undefined {
   const baseUrl = process.env.EPISODIC_MEMORY_API_BASE_URL;
   const token = process.env.EPISODIC_MEMORY_API_TOKEN;
   const timeoutMs = process.env.EPISODIC_MEMORY_API_TIMEOUT_MS;
+  // Memoize: reuse the spread of process.env across long sessions (10+ chunks)
+  // when none of the watched vars changed.
+  const key = `${baseUrl ?? ''}|${token ?? ''}|${timeoutMs ?? ''}`;
+  if (cachedApiEnv && cachedApiEnvKey === key) return cachedApiEnv;
 
   // Always include the reentrancy guard so the SDK-spawned Claude subprocess
   // (which inherits this env) marks itself as a reentrant context. The
   // SessionStart hook checks the guard via shouldSkipReentrantSync() and
   // exits before launching another sync, breaking the recursive cascade
   // reported in #87.
-  return {
+  cachedApiEnv = {
     ...process.env,
     EPISODIC_MEMORY_SUMMARIZER_GUARD: '1',
     ...(baseUrl && { ANTHROPIC_BASE_URL: baseUrl }),
     ...(token && { ANTHROPIC_AUTH_TOKEN: token }),
     ...(timeoutMs && { API_TIMEOUT_MS: timeoutMs }),
   };
+  cachedApiEnvKey = key;
+  return cachedApiEnv;
 }
 
 /**
@@ -74,32 +83,11 @@ function extractSummary(text: string): string {
   return text.trim();
 }
 
-/**
- * Build the options object passed to the Claude Agent SDK's query() for a
- * summarization call.
- *
- * persistSession: false keeps the SDK from writing its session transcript to
- * ~/.claude/projects/ (#83). Without it, every summarization spawns a fake
- * session JSONL that pollutes the IDE session sidebar. The option is honored
- * by claude-agent-sdk >= 0.2.0.
- */
-export function buildSummarizerQueryOptions(args: {
-  model: string;
-  sessionId?: string;
-}): Record<string, unknown> {
-  const { model, sessionId } = args;
-  return {
-    model,
-    max_tokens: 4096,
-    env: getApiEnv(),
-    resume: sessionId,
-    persistSession: false,
-    // Don't override systemPrompt when resuming — the resumed session's prompt stays in effect.
-    ...(sessionId ? {} : {
-      systemPrompt: 'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Your output will be indexed directly.'
-    }),
-  };
-}
+const SUMMARIZER_SYSTEM_PROMPT =
+  'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Your output will be indexed directly.';
+
+const HIERARCHICAL_SUMMARIZER_SYSTEM_PROMPT =
+  'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Each user message is an independent summarization request — answer it on its own without referring back to prior turns.';
 
 async function callClaude(prompt: string, sessionId?: string, useFallback = false): Promise<string> {
   const primaryModel = process.env.EPISODIC_MEMORY_API_MODEL || 'haiku';
@@ -140,9 +128,7 @@ async function callClaude(prompt: string, sessionId?: string, useFallback = fals
         },
         // Don't override systemPrompt when resuming - it uses the original session's prompt
         // Instead, the prompt itself should provide clear instructions
-        ...(sessionId ? {} : {
-          systemPrompt: 'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Your output will be indexed directly.'
-        })
+        ...(sessionId ? {} : { systemPrompt: SUMMARIZER_SYSTEM_PROMPT })
       } as any
     });
 
@@ -344,7 +330,13 @@ class HierarchicalSession {
   private inboxResolver: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
   private closed = false;
   private abortController = new AbortController();
+  // Lifetime counter for diagnostic logs — survives reopen() across thinking-budget fallbacks.
   private turnsSent = 0;
+  private resumeSessionId: string | undefined;
+
+  constructor(opts: { sessionId?: string } = {}) {
+    this.resumeSessionId = opts.sessionId;
+  }
 
   private inputStream(): AsyncIterable<SDKUserMessage> {
     return {
@@ -397,12 +389,13 @@ class HierarchicalSession {
           max_tokens: 4096,
           env: getApiEnv(),
           abortController: this.abortController,
+          ...(this.resumeSessionId ? { resume: this.resumeSessionId } : {}),
           settingSources: [],
           mcpServers: {},
           allowedTools: [],
           disallowedTools: ['*'],
           strictMcpConfig: true,
-          systemPrompt: 'Write concise, factual summaries. Output ONLY the summary - no preamble, no "Here is", no "I will". Each user message is an independent summarization request — answer it on its own without referring back to prior turns.',
+          systemPrompt: HIERARCHICAL_SUMMARIZER_SYSTEM_PROMPT,
           stderr: (data: string) => {
             const trimmed = String(data).trim();
             if (trimmed) log.debug(`[sdk] ${trimmed}`);
@@ -470,7 +463,8 @@ class HierarchicalSession {
   /**
    * Reset internal state after a forced close so a follow-up send() (e.g. the
    * thinking-budget fallback path) starts a fresh subprocess instead of
-   * landing on a closed input stream.
+   * landing on a closed input stream. turnsSent is preserved so log lines
+   * keep accurate lifetime turn counts across the fallback.
    */
   private reopen(): void {
     this.closed = false;
@@ -478,7 +472,6 @@ class HierarchicalSession {
     this.inboxResolver = null;
     this.abortController = new AbortController();
     this.q = null;
-    this.turnsSent = 0;
   }
 }
 
@@ -537,7 +530,7 @@ export async function summarizeConversation(
   }
 
   // Reuse one CLI subprocess for all chunks + synthesis (#1).
-  const session = new HierarchicalSession();
+  const session = new HierarchicalSession({ sessionId });
   try {
     for (let i = chunkSummaries.length; i < chunks.length; i++) {
       const chunkText = formatConversationText(chunks[i]);

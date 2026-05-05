@@ -15,6 +15,18 @@ process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '20000';
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 20;
 
+// Skip re-copying the archive when source size + mtime match. Transcripts are
+// append-only, so any growth bumps both. lstat avoids following worktree symlinks.
+function shouldRefreshArchive(sourcePath: string, archivePath: string): boolean {
+  try {
+    const archiveStat = fs.lstatSync(archivePath);
+    const sourceStat = fs.lstatSync(sourcePath);
+    return sourceStat.size !== archiveStat.size || sourceStat.mtimeMs > archiveStat.mtimeMs;
+  } catch {
+    return true;
+  }
+}
+
 // Process items in batches with limited concurrency
 async function processBatch<T, R>(
   items: T[],
@@ -306,8 +318,9 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
       // Ensure parent dirs exist for subagent files
       fs.mkdirSync(path.dirname(archivePath), { recursive: true });
 
-      // Refresh the archive when the source may have grown beyond what we've seen.
-      if (!fs.existsSync(archivePath) || maxIndexedLine > 0) {
+      // Refresh the archive when the source has actually changed.
+      // Avoids re-copying multi-megabyte transcripts on every incremental run.
+      if (shouldRefreshArchive(sourcePath, archivePath)) {
         fs.copyFileSync(sourcePath, archivePath);
       }
 

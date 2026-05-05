@@ -1,29 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { buildSummarizerQueryOptions, getApiEnv, shouldSkipReentrantSync } from '../src/summarizer.js';
-
-describe('buildSummarizerQueryOptions', () => {
-  it('sets persistSession: false so the SDK does not write session JSONLs to ~/.claude/projects/ (#83)', () => {
-    const opts = buildSummarizerQueryOptions({ model: 'haiku' });
-    expect(opts.persistSession).toBe(false);
-  });
-
-  it('passes through the model and max_tokens', () => {
-    const opts = buildSummarizerQueryOptions({ model: 'haiku' });
-    expect(opts.model).toBe('haiku');
-    expect(opts.max_tokens).toBe(4096);
-  });
-
-  it('includes a systemPrompt on fresh sessions', () => {
-    const opts = buildSummarizerQueryOptions({ model: 'haiku' });
-    expect(opts.systemPrompt).toBeDefined();
-  });
-
-  it('omits systemPrompt when resuming so the original session prompt stays in effect', () => {
-    const opts = buildSummarizerQueryOptions({ model: 'haiku', sessionId: 'abc-123' });
-    expect(opts.resume).toBe('abc-123');
-    expect(opts.systemPrompt).toBeUndefined();
-  });
-});
+import { getApiEnv, shouldSkipReentrantSync } from '../src/summarizer.js';
 
 describe('getApiEnv', () => {
   afterEach(() => {

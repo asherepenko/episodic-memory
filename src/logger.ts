@@ -63,4 +63,5 @@ export function closeLog(): void {
     logStream.end();
     logStream = null;
   }
+  logPath = null;
 }

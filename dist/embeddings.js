@@ -41,6 +41,20 @@ export async function generateEmbedding(text) {
     return Array.from(output.data);
 }
 /**
+ * Cosine similarity between two embeddings produced by `generateEmbedding`.
+ * Both vectors are L2-normalized at extraction time (normalize: true above),
+ * so cosine collapses to the dot product — keep this in sync if pooling
+ * changes.
+ */
+export function cosineSimilarity(a, b) {
+    if (a.length !== b.length)
+        return 0;
+    let dot = 0;
+    for (let i = 0; i < a.length; i++)
+        dot += a[i] * b[i];
+    return dot;
+}
+/**
  * Prepend the BGE retrieval prefix to a query string. Idempotent: returns
  * the input unchanged if the prefix is already present.
  */

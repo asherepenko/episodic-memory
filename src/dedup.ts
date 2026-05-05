@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { generateEmbedding } from './embeddings.js';
+import { generateEmbedding, cosineSimilarity } from './embeddings.js';
 
 /**
  * Lightweight summary deduplication (#8).
@@ -29,14 +29,6 @@ function isEnabled(): boolean {
   return process.env.EPISODIC_MEMORY_DEDUP !== '0';
 }
 
-function cosine(a: number[], b: number[]): number {
-  // Embeddings from generateEmbedding are L2-normalized → cosine = dot product.
-  if (a.length !== b.length) return 0;
-  let dot = 0;
-  for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
-  return dot;
-}
-
 /**
  * Find the newest *-summary.txt in the same directory other than `selfPath`.
  * Returns null if none.
@@ -55,7 +47,7 @@ function findNewestSibling(projectDir: string, selfPath: string): string | null 
     if (!name.endsWith('-summary.txt') || name === selfBase) continue;
     const full = path.join(projectDir, name);
     try {
-      const stat = fs.statSync(full);
+      const stat = fs.lstatSync(full);
       if (!newest || stat.mtimeMs > newest.mtime) {
         newest = { p: full, mtime: stat.mtimeMs };
       }
@@ -95,7 +87,7 @@ export async function dedupAgainstSiblings(
   }
 
   const [a, b] = await Promise.all([generateEmbedding(summary), generateEmbedding(prev)]);
-  const sim = cosine(a, b);
+  const sim = cosineSimilarity(a, b);
   const threshold = getThreshold();
 
   if (sim >= threshold) {

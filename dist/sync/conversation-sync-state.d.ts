@@ -38,7 +38,7 @@ export interface ConversationSyncStateStore {
     save(jsonlPath: string, next: SyncState): void;
     recordFailure(jsonlPath: string, error: string): SyncState;
     clearFailure(jsonlPath: string): void;
-    markStale(jsonlPath: string): void;
+    markStale(jsonlPath: string): SyncState;
     countPoison(): number;
 }
 export declare function sidecarPathFor(jsonlPath: string): string;

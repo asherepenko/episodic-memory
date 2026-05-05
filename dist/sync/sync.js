@@ -9,14 +9,29 @@ const EXCLUSION_MARKERS = [
     'Only use NO_INSIGHTS_FOUND',
     SUMMARIZER_CONTEXT_MARKER,
 ];
+// Markers always appear in the system prompt or first user turn — well
+// inside the first 32 KB of any transcript. Reading the entire JSONL is
+// wasteful for multi-megabyte conversations.
+const MARKER_SCAN_BYTES = 32 * 1024;
 function shouldSkipConversation(filePath) {
+    let fd;
     try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        return EXCLUSION_MARKERS.some(marker => content.includes(marker));
+        fd = fs.openSync(filePath, 'r');
+        const buf = Buffer.alloc(MARKER_SCAN_BYTES);
+        const bytesRead = fs.readSync(fd, buf, 0, MARKER_SCAN_BYTES, 0);
+        const head = buf.slice(0, bytesRead).toString('utf-8');
+        return EXCLUSION_MARKERS.some(marker => head.includes(marker));
     }
-    catch (error) {
-        // If we can't read the file, don't skip it
+    catch {
         return false;
+    }
+    finally {
+        if (fd !== undefined) {
+            try {
+                fs.closeSync(fd);
+            }
+            catch { /* ignore */ }
+        }
     }
 }
 function copyIfNewer(src, dest) {
@@ -27,8 +42,8 @@ function copyIfNewer(src, dest) {
     }
     // Check if destination exists and is up-to-date
     if (fs.existsSync(dest)) {
-        const srcStat = fs.statSync(src);
-        const destStat = fs.statSync(dest);
+        const srcStat = fs.lstatSync(src);
+        const destStat = fs.lstatSync(dest);
         if (destStat.mtimeMs >= srcStat.mtimeMs) {
             return false; // Dest is current, skip
         }
@@ -73,7 +88,7 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
         if (!projectEntry.isDirectory())
             continue;
         const project = projectEntry.name;
-        if (excludedProjects.includes(project)) {
+        if (excludedDirSet.has(project)) {
             log.info("\nSkipping excluded project: " + project);
             continue;
         }
@@ -84,22 +99,21 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
             const destFile = path.join(destDir, project, file);
             try {
                 const wasCopied = copyIfNewer(srcFile, destFile);
+                let state;
                 if (wasCopied) {
                     result.copied++;
                     filesToIndex.push(destFile);
-                    store.markStale(destFile);
+                    state = store.markStale(destFile);
                 }
                 else {
                     result.skipped++;
+                    state = store.load(destFile);
                 }
                 // Check if this file needs a summary (whether newly copied or existing)
-                if (!options.skipSummaries && !shouldSkipConversation(destFile)) {
-                    const s = store.load(destFile);
-                    if (s.kind !== 'complete') {
-                        const sessionId = extractSessionIdFromPath(destFile);
-                        if (sessionId) {
-                            filesToSummarize.push({ path: destFile, sessionId });
-                        }
+                if (!options.skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
+                    const sessionId = extractSessionIdFromPath(destFile);
+                    if (sessionId) {
+                        filesToSummarize.push({ path: destFile, sessionId, state });
                     }
                 }
             }
@@ -148,10 +162,7 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
         const { summarizeConversation } = await import('../summarizer.js');
         const { dedupAgainstSiblings } = await import('../dedup.js');
         const beforeFilter = filesToSummarize.length;
-        const eligible = filesToSummarize.filter(f => {
-            const s = store.load(f.path);
-            return s.kind !== 'poison' || isRetriable(s);
-        });
+        const eligible = filesToSummarize.filter(f => f.state.kind !== 'poison' || isRetriable(f.state));
         const skippedPoison = beforeFilter - eligible.length;
         if (skippedPoison > 0) {
             log.info(`Skipping ${skippedPoison} file(s) that exceeded ${MAX_ATTEMPTS} retries (set EPISODIC_MEMORY_RETRY_ALL=1 to retry).`);

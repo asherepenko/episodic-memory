@@ -21,6 +21,15 @@ const STATE_FILE = 'sync-state.json';
 export function sidecarPathFor(jsonlPath) {
     return jsonlPath.replace(/\.jsonl$/, '.sync.json');
 }
+function buildPoisonState(current, error) {
+    const prevAttempts = current.kind === 'poison' ? current.attempts : 0;
+    return {
+        kind: 'poison',
+        attempts: prevAttempts + 1,
+        lastError: error,
+        lastAttempt: new Date().toISOString(),
+    };
+}
 function legacyPartialPathFor(jsonlPath) {
     return jsonlPath.replace(/\.jsonl$/, '-summary.partial.json');
 }
@@ -254,14 +263,7 @@ export function openConversationSyncStateStore(opts) {
         writeSidecar(jsonlPath, next);
     };
     const recordFailure = (jsonlPath, error) => {
-        const current = load(jsonlPath);
-        const prevAttempts = current.kind === 'poison' ? current.attempts : 0;
-        const next = {
-            kind: 'poison',
-            attempts: prevAttempts + 1,
-            lastError: error,
-            lastAttempt: new Date().toISOString(),
-        };
+        const next = buildPoisonState(load(jsonlPath), error);
         save(jsonlPath, next);
         return next;
     };
@@ -281,8 +283,11 @@ export function openConversationSyncStateStore(opts) {
     const markStale = (jsonlPath) => {
         const current = load(jsonlPath);
         if (current.kind === 'complete') {
-            save(jsonlPath, { kind: 'stale', lastUpdated: new Date().toISOString() });
+            const next = { kind: 'stale', lastUpdated: new Date().toISOString() };
+            save(jsonlPath, next);
+            return next;
         }
+        return current;
     };
     const countPoison = () => {
         const sidecars = [];
@@ -320,14 +325,7 @@ export function openMemoryConversationSyncStateStore() {
         map.set(jsonlPath, next);
     };
     const recordFailure = (jsonlPath, error) => {
-        const current = map.get(jsonlPath) ?? { kind: 'pending' };
-        const prevAttempts = current.kind === 'poison' ? current.attempts : 0;
-        const next = {
-            kind: 'poison',
-            attempts: prevAttempts + 1,
-            lastError: error,
-            lastAttempt: new Date().toISOString(),
-        };
+        const next = buildPoisonState(map.get(jsonlPath) ?? { kind: 'pending' }, error);
         map.set(jsonlPath, next);
         return next;
     };
@@ -340,8 +338,11 @@ export function openMemoryConversationSyncStateStore() {
     const markStale = (jsonlPath) => {
         const current = map.get(jsonlPath) ?? { kind: 'pending' };
         if (current.kind === 'complete') {
-            map.set(jsonlPath, { kind: 'stale', lastUpdated: new Date().toISOString() });
+            const next = { kind: 'stale', lastUpdated: new Date().toISOString() };
+            map.set(jsonlPath, next);
+            return next;
         }
+        return current;
     };
     const countPoison = () => {
         let count = 0;

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-05-06
+
+### Performance
+- **Faster sync on large transcripts.** The exclusion-marker check now reads only the first 32 KB of each `.jsonl` instead of the entire file. Multi-MB conversations no longer pay full-read cost on every sync pass.
+- **Fewer sidecar reads per sync.** Conversation state is loaded once per file and threaded through the indexing and summary queues; previous code reloaded the same `.sync.json` two or three times per file.
+- **Skip redundant archive copies.** `indexer.ts` now compares source vs archive size and mtime before recopying. Idle re-runs no longer rewrite multi-MB transcript copies that haven't changed.
+- **Cached API env for long sessions.** `getApiEnv()` memoizes its `process.env` spread keyed on the watched API config vars. Long-tier conversations (10+ chunks) reuse the same allocation across calls.
+
+### Fixed
+- **Worktree-safe stat calls.** `dedup.ts` and `sync/sync.ts` now use `fs.lstatSync` instead of `fs.statSync`, matching the project's symlink-safe convention so summary dedup and `copyIfNewer` no longer break on git-worktree symlinks.
+- **`HierarchicalSession` now honors `sessionId`.** Long-tier summarization passes `resume: sessionId` to the SDK on the first turn, so the documented `SummarizeOptions.sessionId` option is no longer silently dropped for long conversations.
+- **Accurate turn counts after fallback.** `HierarchicalSession.reopen()` (thinking-budget fallback path) preserves `turnsSent` so log lines stay correct across the recycle.
+
+### Changed
+- **Single source of truth for cosine similarity.** `cosineSimilarity()` now lives in `src/embeddings.ts` next to `generateEmbedding`. `src/dedup.ts` consumes it. The L2-normalized dot-product invariant is no longer duplicated inline.
+- **Single source of truth for poison-state construction.** `buildPoisonState()` in `src/sync/conversation-sync-state.ts` is shared between the filesystem and in-memory store implementations.
+- **Single source of truth for summarizer system prompts.** Two named constants (`SUMMARIZER_SYSTEM_PROMPT`, `HIERARCHICAL_SUMMARIZER_SYSTEM_PROMPT`) replace duplicated prompt strings.
+- **`store.markStale()` returns the resulting `SyncState`** so callers can use it without a follow-up `load()`.
+
+### Removed
+- **Dead `buildSummarizerQueryOptions`.** The function was exported and tested but never called from production code (`callClaude` and `HierarchicalSession.send` inlined a different option set). Its four tests were validating fiction. Both are gone; the real call sites remain unchanged.
+
+### Tests
+- 190/190 passing (was 190 in 1.2.2 — net zero after dropping the four dead `buildSummarizerQueryOptions` tests and adding none new for the refactors covered by existing tests).
+
 ## [1.2.2] - 2026-05-05
 
 ### Merged from upstream (obra/episodic-memory)
