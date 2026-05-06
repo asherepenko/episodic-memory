@@ -74,8 +74,9 @@ export async function indexConversations(limitToProject, maxConversations, concu
             for (const file of files) {
                 const sourcePath = path.join(projectPath, file);
                 const archivePath = path.join(projectArchive, file);
-                // Copy to archive (ensure parent dirs exist for subagent files)
-                if (!fs.existsSync(archivePath)) {
+                // Copy to archive (ensure parent dirs exist for subagent files).
+                // Refresh when the source has changed so show/read serve current content.
+                if (shouldRefreshArchive(sourcePath, archivePath)) {
                     fs.mkdirSync(path.dirname(archivePath), { recursive: true });
                     fs.copyFileSync(sourcePath, archivePath);
                     console.log(`  Archived: ${file}`);

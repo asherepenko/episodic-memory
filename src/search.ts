@@ -223,14 +223,38 @@ async function countLines(filePath: string): Promise<number> {
   }
 }
 
-// Helper function to get file size in KB
+// Helper function to get file size in KB. lstat avoids following worktree symlinks.
 function getFileSizeInKB(filePath: string): number {
   try {
-    const stats = fs.statSync(filePath);
+    const stats = fs.lstatSync(filePath);
     return Math.round(stats.size / 1024 * 10) / 10; // Round to 1 decimal place
   } catch (error) {
     return 0;
   }
+}
+
+// Per-render memoization. Result lists frequently repeat the same archivePath
+// (multiple exchanges from one transcript); without caching, each row pays a
+// full readline pass to count lines.
+function makeFileMetaCache() {
+  const sizeCache = new Map<string, number>();
+  const lineCache = new Map<string, Promise<number>>();
+  return {
+    sizeKB(p: string): number {
+      const hit = sizeCache.get(p);
+      if (hit !== undefined) return hit;
+      const v = getFileSizeInKB(p);
+      sizeCache.set(p, v);
+      return v;
+    },
+    lines(p: string): Promise<number> {
+      const hit = lineCache.get(p);
+      if (hit) return hit;
+      const v = countLines(p);
+      lineCache.set(p, v);
+      return v;
+    }
+  };
 }
 
 export async function formatResults(results: Array<SearchResult & { summary?: string }>): Promise<string> {
@@ -239,6 +263,7 @@ export async function formatResults(results: Array<SearchResult & { summary?: st
   }
 
   let output = `Found ${results.length} relevant conversation${results.length > 1 ? 's' : ''}:\n\n`;
+  const meta = makeFileMetaCache();
 
   // Process results sequentially to get file metadata
   for (let index = 0; index < results.length; index++) {
@@ -273,9 +298,9 @@ export async function formatResults(results: Array<SearchResult & { summary?: st
       output += `   Tools: ${toolSummary}\n`;
     }
 
-    // Get file metadata
-    const fileSizeKB = getFileSizeInKB(result.exchange.archivePath);
-    const totalLines = await countLines(result.exchange.archivePath);
+    // Get file metadata (deduped by archivePath across results)
+    const fileSizeKB = meta.sizeKB(result.exchange.archivePath);
+    const totalLines = await meta.lines(result.exchange.archivePath);
     const lineRange = `${result.exchange.lineStart}-${result.exchange.lineEnd}`;
 
     // File information with metadata (clean format for smart tool selection)
@@ -356,6 +381,7 @@ export async function formatMultiConceptResults(
   }
 
   let output = `Found ${results.length} conversation${results.length > 1 ? 's' : ''} matching all concepts [${concepts.join(' + ')}]:\n\n`;
+  const meta = makeFileMetaCache();
 
   // Process results sequentially to get file metadata
   for (let index = 0; index < results.length; index++) {
@@ -387,9 +413,9 @@ export async function formatMultiConceptResults(
       output += `   Tools: ${toolSummary}\n`;
     }
 
-    // Get file metadata
-    const fileSizeKB = getFileSizeInKB(result.exchange.archivePath);
-    const totalLines = await countLines(result.exchange.archivePath);
+    // Get file metadata (deduped by archivePath across results)
+    const fileSizeKB = meta.sizeKB(result.exchange.archivePath);
+    const totalLines = await meta.lines(result.exchange.archivePath);
     const lineRange = `${result.exchange.lineStart}-${result.exchange.lineEnd}`;
 
     // File information with metadata (clean format for smart tool selection)

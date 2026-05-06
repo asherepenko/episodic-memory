@@ -212,60 +212,61 @@ export function insertExchange(
      thinking_level, thinking_disabled, thinking_triggers, embedding_version)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-
-  stmt.run(
-    exchange.id,
-    exchange.project,
-    exchange.timestamp,
-    exchange.userMessage,
-    exchange.assistantMessage,
-    exchange.archivePath,
-    exchange.lineStart,
-    exchange.lineEnd,
-    now,
-    exchange.parentUuid || null,
-    exchange.isSidechain ? 1 : 0,
-    exchange.sessionId || null,
-    exchange.cwd || null,
-    exchange.gitBranch || null,
-    exchange.claudeVersion || null,
-    exchange.thinkingLevel || null,
-    exchange.thinkingDisabled ? 1 : 0,
-    exchange.thinkingTriggers || null,
-    EMBEDDING_VERSION
-  );
-
-  // Insert into vector table (delete first since virtual tables don't support REPLACE)
-  const delStmt = db.prepare(`DELETE FROM vec_exchanges WHERE id = ?`);
-  delStmt.run(exchange.id);
-
+  const delVecStmt = db.prepare(`DELETE FROM vec_exchanges WHERE id = ?`);
   const vecStmt = db.prepare(`
     INSERT INTO vec_exchanges (id, embedding)
     VALUES (?, ?)
   `);
+  const toolStmt = db.prepare(`
+    INSERT OR REPLACE INTO tool_calls
+    (id, exchange_id, tool_name, tool_input, tool_result, is_error, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
 
-  vecStmt.run(exchange.id, Buffer.from(new Float32Array(embedding).buffer));
+  // Wrap the exchange row, its vec counterpart, and tool_calls in a single
+  // transaction so a crash mid-sequence cannot leave vec_exchanges out of sync.
+  const tx = db.transaction(() => {
+    stmt.run(
+      exchange.id,
+      exchange.project,
+      exchange.timestamp,
+      exchange.userMessage,
+      exchange.assistantMessage,
+      exchange.archivePath,
+      exchange.lineStart,
+      exchange.lineEnd,
+      now,
+      exchange.parentUuid || null,
+      exchange.isSidechain ? 1 : 0,
+      exchange.sessionId || null,
+      exchange.cwd || null,
+      exchange.gitBranch || null,
+      exchange.claudeVersion || null,
+      exchange.thinkingLevel || null,
+      exchange.thinkingDisabled ? 1 : 0,
+      exchange.thinkingTriggers || null,
+      EMBEDDING_VERSION
+    );
 
-  // Insert tool calls if present
-  if (exchange.toolCalls && exchange.toolCalls.length > 0) {
-    const toolStmt = db.prepare(`
-      INSERT OR REPLACE INTO tool_calls
-      (id, exchange_id, tool_name, tool_input, tool_result, is_error, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
+    // vec_exchanges is virtual; no REPLACE support, so delete + insert.
+    delVecStmt.run(exchange.id);
+    vecStmt.run(exchange.id, Buffer.from(new Float32Array(embedding).buffer));
 
-    for (const toolCall of exchange.toolCalls) {
-      toolStmt.run(
-        toolCall.id,
-        toolCall.exchangeId,
-        toolCall.toolName,
-        toolCall.toolInput ? JSON.stringify(toolCall.toolInput) : null,
-        toolCall.toolResult || null,
-        toolCall.isError ? 1 : 0,
-        toolCall.timestamp
-      );
+    if (exchange.toolCalls && exchange.toolCalls.length > 0) {
+      for (const toolCall of exchange.toolCalls) {
+        toolStmt.run(
+          toolCall.id,
+          toolCall.exchangeId,
+          toolCall.toolName,
+          toolCall.toolInput ? JSON.stringify(toolCall.toolInput) : null,
+          toolCall.toolResult || null,
+          toolCall.isError ? 1 : 0,
+          toolCall.timestamp
+        );
+      }
     }
-  }
+  });
+  tx();
 }
 
 export function getAllExchanges(db: Database.Database): Array<{ id: string; archivePath: string }> {

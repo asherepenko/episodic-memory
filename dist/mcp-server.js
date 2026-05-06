@@ -3222,8 +3222,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path3) {
-      let input = path3;
+    function removeDotSegments(path4) {
+      let input = path4;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3422,8 +3422,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path3, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path3 && path3 !== "/" ? path3 : void 0;
+        const [path4, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path4 && path4 !== "/" ? path4 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7321,10 +7321,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path3) {
-  if (!path3)
+function getElementAtPath(obj, path4) {
+  if (!path4)
     return obj;
-  return path3.reduce((acc, key) => acc?.[key], obj);
+  return path4.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -7733,11 +7733,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path3, issues) {
+function prefixIssues(path4, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path3);
+    iss.path.unshift(path4);
     return iss;
   });
 }
@@ -7884,16 +7884,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path3 = []) => {
+  const processError = (error52, path4 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path3, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
       } else {
-        const fullpath = [...path3, ...issue2.path];
+        const fullpath = [...path4, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -7920,17 +7920,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path3 = []) => {
+  const processError = (error52, path4 = []) => {
     var _a3, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path3, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
       } else {
-        const fullpath = [...path3, ...issue2.path];
+        const fullpath = [...path4, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -7962,8 +7962,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path3 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path3) {
+  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path4) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -20961,13 +20961,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path3 = ref.slice(1).split("/").filter(Boolean);
-  if (path3.length === 0) {
+  const path4 = ref.slice(1).split("/").filter(Boolean);
+  if (path4.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path3[0] === defsKey) {
-    const key = path3[1];
+  if (path4[0] === defsKey) {
+    const key = path4[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -24700,6 +24700,12 @@ function getSuperpowersDir() {
   }
   return ensureDir(dir);
 }
+function getArchiveDir() {
+  if (process.env.TEST_ARCHIVE_DIR) {
+    return ensureDir(process.env.TEST_ARCHIVE_DIR);
+  }
+  return ensureDir(path.join(getSuperpowersDir(), "conversation-archive"));
+}
 function getIndexDir() {
   return ensureDir(path.join(getSuperpowersDir(), "conversation-index"));
 }
@@ -25059,11 +25065,31 @@ async function countLines(filePath) {
 }
 function getFileSizeInKB(filePath) {
   try {
-    const stats = fs3.statSync(filePath);
+    const stats = fs3.lstatSync(filePath);
     return Math.round(stats.size / 1024 * 10) / 10;
   } catch (error51) {
     return 0;
   }
+}
+function makeFileMetaCache() {
+  const sizeCache = /* @__PURE__ */ new Map();
+  const lineCache = /* @__PURE__ */ new Map();
+  return {
+    sizeKB(p) {
+      const hit = sizeCache.get(p);
+      if (hit !== void 0) return hit;
+      const v2 = getFileSizeInKB(p);
+      sizeCache.set(p, v2);
+      return v2;
+    },
+    lines(p) {
+      const hit = lineCache.get(p);
+      if (hit) return hit;
+      const v2 = countLines(p);
+      lineCache.set(p, v2);
+      return v2;
+    }
+  };
 }
 async function formatResults(results) {
   if (results.length === 0) {
@@ -25072,6 +25098,7 @@ async function formatResults(results) {
   let output = `Found ${results.length} relevant conversation${results.length > 1 ? "s" : ""}:
 
 `;
+  const meta3 = makeFileMetaCache();
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     const date5 = new Date(result.exchange.timestamp).toISOString().split("T")[0];
@@ -25096,8 +25123,8 @@ async function formatResults(results) {
       output += `   Tools: ${toolSummary}
 `;
     }
-    const fileSizeKB = getFileSizeInKB(result.exchange.archivePath);
-    const totalLines = await countLines(result.exchange.archivePath);
+    const fileSizeKB = meta3.sizeKB(result.exchange.archivePath);
+    const totalLines = await meta3.lines(result.exchange.archivePath);
     const lineRange = `${result.exchange.lineStart}-${result.exchange.lineEnd}`;
     output += `   Lines ${lineRange} in ${result.exchange.archivePath} (${fileSizeKB}KB, ${totalLines} lines)
 
@@ -25151,6 +25178,7 @@ async function formatMultiConceptResults(results, concepts) {
   let output = `Found ${results.length} conversation${results.length > 1 ? "s" : ""} matching all concepts [${concepts.join(" + ")}]:
 
 `;
+  const meta3 = makeFileMetaCache();
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     const date5 = new Date(result.exchange.timestamp).toISOString().split("T")[0];
@@ -25171,8 +25199,8 @@ async function formatMultiConceptResults(results, concepts) {
       output += `   Tools: ${toolSummary}
 `;
     }
-    const fileSizeKB = getFileSizeInKB(result.exchange.archivePath);
-    const totalLines = await countLines(result.exchange.archivePath);
+    const fileSizeKB = meta3.sizeKB(result.exchange.archivePath);
+    const totalLines = await meta3.lines(result.exchange.archivePath);
     const lineRange = `${result.exchange.lineStart}-${result.exchange.lineEnd}`;
     output += `   Lines ${lineRange} in ${result.exchange.archivePath} (${fileSizeKB}KB, ${totalLines} lines)
 
@@ -26542,10 +26570,11 @@ ${JSON.stringify(value, null, 2)}
 }
 
 // src/version.ts
-var VERSION = "1.2.3";
+var VERSION = "1.2.4";
 
 // src/mcp-server.ts
 import fs4 from "fs";
+import path3 from "path";
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
@@ -26718,10 +26747,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     if (name === "read") {
       const params = ShowConversationInputSchema.parse(args);
-      if (!fs4.existsSync(params.path)) {
+      const archiveDir = path3.resolve(getArchiveDir());
+      const resolvedPath = path3.resolve(params.path);
+      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path3.sep)) {
+        throw new Error(`Access denied: path is outside the archive directory`);
+      }
+      if (!fs4.existsSync(resolvedPath)) {
         throw new Error(`File not found: ${params.path}`);
       }
-      const jsonlContent = fs4.readFileSync(params.path, "utf-8");
+      const jsonlContent = fs4.readFileSync(resolvedPath, "utf-8");
       const markdownContent = formatConversationAsMarkdown(
         jsonlContent,
         params.startLine,

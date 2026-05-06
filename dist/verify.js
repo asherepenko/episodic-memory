@@ -48,7 +48,7 @@ export async function verifyIndex() {
             // Check if file is outdated (modified after last_indexed)
             const lastIndexed = getFileLastIndexed(db, conversationPath);
             if (lastIndexed !== null) {
-                const fileStat = fs.statSync(conversationPath);
+                const fileStat = fs.lstatSync(conversationPath);
                 if (fileStat.mtimeMs > lastIndexed) {
                     result.outdated.push({
                         path: conversationPath,

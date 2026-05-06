@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-05-06
+
+### Security
+- **MCP `read` tool now restricted to the archive directory.** The tool previously accepted any filesystem path from the MCP client and read the file directly, which would have let a caller read SSH keys, env files, or anything else the process could see. Paths are now resolved and rejected if they fall outside `~/.config/superpowers/conversation-archive/`.
+
+### Fixed
+- **Atomic exchange writes.** `insertExchange` now wraps the exchange row, its vector counterpart, and tool-call rows in a single SQLite transaction. A crash mid-write can no longer leave the vector table out of sync with the main table (the failure mode was an exchange that existed but wasn't searchable, or vice versa).
+- **Stale archives on full re-index.** The `--full` indexing path was only copying source `.jsonl` files into the archive when the archive copy didn't exist. Subsequent `show`/MCP `read` calls served outdated content. The full path now uses the same source-vs-archive size+mtime check as the incremental path.
+- **Worktree-safe stat calls (round 2).** `search.ts` and `verify.ts` now use `fs.lstatSync` instead of `fs.statSync`, completing the project's symlink-safe convention rollout.
+
+### Performance
+- **Faster search rendering on repeated transcripts.** When multiple search results pointed at the same transcript file, each row paid for its own full readline pass to count lines. Result rendering now memoizes line count and file size per archive path within a single render call — no more N×full-file reads when 5 of 10 results come from the same conversation.
+
 ## [1.2.3] - 2026-05-06
 
 ### Performance

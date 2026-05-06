@@ -22,7 +22,9 @@ import {
 } from './search.js';
 import { formatConversationAsMarkdown } from './show.js';
 import { VERSION } from './version.js';
+import { getArchiveDir } from './paths.js';
 import fs from 'fs';
+import path from 'path';
 
 // Zod Schemas for Input Validation
 
@@ -276,13 +278,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'read') {
       const params = ShowConversationInputSchema.parse(args);
 
+      // Restrict reads to the archive directory; the path comes from an MCP
+      // client and would otherwise allow reading any file the process can see.
+      const archiveDir = path.resolve(getArchiveDir());
+      const resolvedPath = path.resolve(params.path);
+      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path.sep)) {
+        throw new Error(`Access denied: path is outside the archive directory`);
+      }
+
       // Verify file exists
-      if (!fs.existsSync(params.path)) {
+      if (!fs.existsSync(resolvedPath)) {
         throw new Error(`File not found: ${params.path}`);
       }
 
       // Read and format conversation with optional line range
-      const jsonlContent = fs.readFileSync(params.path, 'utf-8');
+      const jsonlContent = fs.readFileSync(resolvedPath, 'utf-8');
       const markdownContent = formatConversationAsMarkdown(
         jsonlContent,
         params.startLine,
