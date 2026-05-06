@@ -119,6 +119,11 @@ episodic-memory index --cleanup
 episodic-memory search "React Router authentication"
 episodic-memory search --text "exact phrase"
 episodic-memory search --after 2025-09-01 "refactoring"
+episodic-memory search --project my-app "auth flow"
+episodic-memory search --git-branch feature/login "validation"
+
+# Multi-concept AND search (positional args)
+episodic-memory search "React Router" "authentication" "JWT"
 
 # Display a conversation in readable format
 episodic-memory show path/to/conversation.jsonl
@@ -294,7 +299,7 @@ When installed as a Claude Code plugin, episodic-memory provides an MCP (Model C
 
 ### Available MCP Tools
 
-#### `episodic_memory_search`
+#### `search`
 
 Search indexed conversations using semantic similarity or exact text matching.
 
@@ -321,20 +326,27 @@ Search indexed conversations using semantic similarity or exact text matching.
 - `limit` (number): Max results, 1-50 (default: 10)
 - `after` (string, optional): Only show conversations after YYYY-MM-DD
 - `before` (string, optional): Only show conversations before YYYY-MM-DD
+- `project` (string, optional): Filter by project name (exact match)
+- `session_id` (string, optional): Filter by session ID (exact match)
+- `git_branch` (string, optional): Filter by git branch name (exact match)
 - `response_format` ('markdown' | 'json'): Output format (default: 'markdown')
 
-#### `episodic_memory_show`
+#### `read`
 
-Display a full conversation in readable markdown format.
+Read a full conversation in readable markdown format. Supports `startLine`/`endLine` pagination for large transcripts.
 
 ```json
 {
-  "path": "/path/to/conversation.jsonl"
+  "path": "/path/to/conversation.jsonl",
+  "startLine": 1,
+  "endLine": 200
 }
 ```
 
 **Parameters:**
-- `path` (string): Absolute path to the JSONL conversation file
+- `path` (string): Absolute path to the JSONL conversation file. Must resolve inside the archive directory (`~/.config/superpowers/conversation-archive/` or `$EPISODIC_MEMORY_CONFIG_DIR`); paths outside are rejected.
+- `startLine` (number, optional): 1-indexed inclusive start
+- `endLine` (number, optional): 1-indexed inclusive end
 
 ### Using the MCP Server Directly
 
