@@ -75,12 +75,18 @@ function copyIfNewer(src: string, dest: string): boolean {
   return true;
 }
 
-function extractSessionIdFromPath(filePath: string): string | null {
-  // Extract session ID from filename: /path/to/abc-123-def.jsonl -> abc-123-def
+export function extractSessionIdFromPath(filePath: string): string | null {
+  // Extract session ID from filename. Handles two formats:
+  //  - Plain Claude UUID:        /path/to/abc-123-def.jsonl -> abc-123-def
+  //  - Codex rollout filename:   /path/rollout-2026-05-12T18-00-00-<uuid>.jsonl -> <uuid>
   const basename = path.basename(filePath, '.jsonl');
-  // Session IDs are UUIDs, validate format
+  const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(basename)) {
     return basename;
+  }
+  if (basename.startsWith('rollout-')) {
+    const match = basename.match(uuidRe);
+    if (match) return match[0];
   }
   return null;
 }

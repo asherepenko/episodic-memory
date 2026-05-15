@@ -24721,10 +24721,14 @@ function migrateSchema(db) {
     { name: "last_indexed", sql: "ALTER TABLE exchanges ADD COLUMN last_indexed INTEGER" },
     { name: "parent_uuid", sql: "ALTER TABLE exchanges ADD COLUMN parent_uuid TEXT" },
     { name: "is_sidechain", sql: "ALTER TABLE exchanges ADD COLUMN is_sidechain BOOLEAN DEFAULT 0" },
+    { name: "harness", sql: "ALTER TABLE exchanges ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude'" },
     { name: "session_id", sql: "ALTER TABLE exchanges ADD COLUMN session_id TEXT" },
     { name: "cwd", sql: "ALTER TABLE exchanges ADD COLUMN cwd TEXT" },
     { name: "git_branch", sql: "ALTER TABLE exchanges ADD COLUMN git_branch TEXT" },
     { name: "claude_version", sql: "ALTER TABLE exchanges ADD COLUMN claude_version TEXT" },
+    { name: "agent_version", sql: "ALTER TABLE exchanges ADD COLUMN agent_version TEXT" },
+    { name: "model", sql: "ALTER TABLE exchanges ADD COLUMN model TEXT" },
+    { name: "model_provider", sql: "ALTER TABLE exchanges ADD COLUMN model_provider TEXT" },
     { name: "thinking_level", sql: "ALTER TABLE exchanges ADD COLUMN thinking_level TEXT" },
     { name: "thinking_disabled", sql: "ALTER TABLE exchanges ADD COLUMN thinking_disabled BOOLEAN" },
     { name: "thinking_triggers", sql: "ALTER TABLE exchanges ADD COLUMN thinking_triggers TEXT" },
@@ -24807,10 +24811,14 @@ function initDatabase() {
       last_indexed INTEGER,
       parent_uuid TEXT,
       is_sidechain BOOLEAN DEFAULT 0,
+      harness TEXT NOT NULL DEFAULT 'claude',
       session_id TEXT,
       cwd TEXT,
       git_branch TEXT,
       claude_version TEXT,
+      agent_version TEXT,
+      model TEXT,
+      model_provider TEXT,
       thinking_level TEXT,
       thinking_disabled BOOLEAN,
       thinking_triggers TEXT,
@@ -24844,6 +24852,9 @@ function initDatabase() {
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_project ON exchanges(project)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_harness ON exchanges(harness)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sidechain ON exchanges(is_sidechain)
@@ -24933,6 +24944,53 @@ function buildSearchFilters(options) {
 function hasMetadataFilters(options) {
   return Boolean(options.project || options.session_id || options.git_branch);
 }
+var EXCHANGE_SELECT_COLUMNS = `
+        e.id,
+        e.project,
+        e.timestamp,
+        e.user_message,
+        e.assistant_message,
+        e.archive_path,
+        e.line_start,
+        e.line_end,
+        e.parent_uuid,
+        e.is_sidechain,
+        e.harness,
+        e.session_id,
+        e.cwd,
+        e.git_branch,
+        e.claude_version,
+        e.agent_version,
+        e.model,
+        e.model_provider,
+        e.thinking_level,
+        e.thinking_disabled,
+        e.thinking_triggers`;
+function exchangeFromRow(row) {
+  return {
+    id: row.id,
+    project: row.project,
+    timestamp: row.timestamp,
+    userMessage: row.user_message,
+    assistantMessage: row.assistant_message,
+    archivePath: row.archive_path,
+    lineStart: row.line_start,
+    lineEnd: row.line_end,
+    parentUuid: row.parent_uuid || void 0,
+    isSidechain: Boolean(row.is_sidechain),
+    harness: row.harness,
+    sessionId: row.session_id || void 0,
+    cwd: row.cwd || void 0,
+    gitBranch: row.git_branch || void 0,
+    claudeVersion: row.claude_version || void 0,
+    agentVersion: row.agent_version || void 0,
+    model: row.model || void 0,
+    modelProvider: row.model_provider || void 0,
+    thinkingLevel: row.thinking_level || void 0,
+    thinkingDisabled: row.thinking_disabled === null ? void 0 : Boolean(row.thinking_disabled),
+    thinkingTriggers: row.thinking_triggers || void 0
+  };
+}
 function l2DistanceToCosineSimilarity(distance) {
   const similarity = 1 - distance * distance / 2;
   return Math.max(-1, Math.min(1, similarity));
@@ -24960,14 +25018,7 @@ async function searchConversations(query, options = {}) {
     const k = hasMetadataFilters(options) ? limit * 3 : limit;
     const stmt = db.prepare(`
       SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
+        ${EXCHANGE_SELECT_COLUMNS},
         vec.distance
       FROM vec_exchanges AS vec
       JOIN exchanges AS e ON vec.id = e.id
@@ -24989,14 +25040,7 @@ async function searchConversations(query, options = {}) {
   if (mode === "text" || mode === "both") {
     const textStmt = db.prepare(`
       SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
+        ${EXCHANGE_SELECT_COLUMNS},
         0 as distance
       FROM exchanges AS e
       WHERE (e.user_message LIKE ? OR e.assistant_message LIKE ?)
@@ -25019,16 +25063,7 @@ async function searchConversations(query, options = {}) {
   }
   db.close();
   return results.map((row) => {
-    const exchange = {
-      id: row.id,
-      project: row.project,
-      timestamp: row.timestamp,
-      userMessage: row.user_message,
-      assistantMessage: row.assistant_message,
-      archivePath: row.archive_path,
-      lineStart: row.line_start,
-      lineEnd: row.line_end
-    };
+    const exchange = exchangeFromRow(row);
     const summaryPath = row.archive_path.replace(".jsonl", "-summary.txt");
     let summary;
     if (fs3.existsSync(summaryPath)) {
@@ -26445,6 +26480,9 @@ function formatConversationAsMarkdown(jsonl, startLine, endLine) {
     startLine !== void 0 ? startLine - 1 : 0,
     endLine !== void 0 ? endLine : void 0
   ) : allLines;
+  if (isCodexRollout(lines)) {
+    return formatCodexConversationAsMarkdown(lines);
+  }
   const allMessages = lines.map((line) => JSON.parse(line));
   const messages = allMessages.filter((msg) => {
     if (msg.type !== "user" && msg.type !== "assistant") return false;
@@ -26640,9 +26678,192 @@ ${JSON.stringify(value, null, 2)}
   }
   return output;
 }
+function isCodexRollout(lines) {
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      return Boolean(parsed.payload && (parsed.type === "session_meta" || parsed.type === "turn_context" || parsed.type === "response_item" || parsed.type === "event_msg" || parsed.type === "compacted"));
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+function extractCodexText(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.filter((block) => block && typeof block === "object" && typeof block.text === "string").map((block) => block.text).join("\n");
+}
+function safeParseJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+function codexToolInput(payload) {
+  if (typeof payload.arguments === "string") {
+    return safeParseJson(payload.arguments);
+  }
+  if (payload.arguments !== void 0) {
+    return payload.arguments;
+  }
+  if (payload.input !== void 0) {
+    return payload.input;
+  }
+  if (payload.action !== void 0) {
+    return payload.action;
+  }
+  return void 0;
+}
+function codexToolOutput(payload) {
+  if (payload.output === void 0 || payload.output === null) {
+    return "";
+  }
+  if (typeof payload.output === "string") {
+    return payload.output;
+  }
+  const text = extractCodexText(payload.output);
+  return text.trim() ? text : JSON.stringify(payload.output, null, 2);
+}
+function formatCodexToolInputMarkdown(input) {
+  if (input === void 0 || input === null) {
+    return "";
+  }
+  if (typeof input === "string") {
+    return `\`\`\`
+${input}
+\`\`\`
+
+`;
+  }
+  if (typeof input !== "object") {
+    return `${String(input)}
+
+`;
+  }
+  let output = "";
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === "string" && !value.includes("\n")) {
+      output += `- **${key}:** ${value}
+`;
+    } else {
+      output += `- **${key}:**
+\`\`\`json
+${typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+\`\`\`
+`;
+    }
+  }
+  return output ? `${output}
+` : "";
+}
+function formatCodexConversationAsMarkdown(lines) {
+  const entries = lines.map((line) => JSON.parse(line));
+  const metadata = {};
+  for (const entry of entries) {
+    const payload = entry.payload;
+    if (entry.type === "session_meta" && payload) {
+      metadata.sessionId = payload.id || metadata.sessionId;
+      metadata.cwd = payload.cwd || metadata.cwd;
+      metadata.gitBranch = payload.git?.branch || metadata.gitBranch;
+      metadata.cliVersion = payload.cli_version || metadata.cliVersion;
+      metadata.modelProvider = payload.model_provider || metadata.modelProvider;
+    } else if (entry.type === "turn_context" && payload) {
+      metadata.cwd = payload.cwd || metadata.cwd;
+      metadata.model = payload.model || metadata.model;
+    }
+  }
+  let output = "# Conversation\n\n";
+  output += "## Metadata\n\n";
+  output += "**Harness:** Codex\n\n";
+  if (metadata.sessionId) output += `**Session ID:** ${metadata.sessionId}
+
+`;
+  if (metadata.gitBranch) output += `**Git Branch:** ${metadata.gitBranch}
+
+`;
+  if (metadata.cwd) output += `**Working Directory:** ${metadata.cwd}
+
+`;
+  if (metadata.cliVersion) output += `**Codex Version:** ${metadata.cliVersion}
+
+`;
+  if (metadata.model) output += `**Model:** ${metadata.model}
+
+`;
+  if (metadata.modelProvider) output += `**Model Provider:** ${metadata.modelProvider}
+
+`;
+  output += "---\n\n";
+  output += "## Messages\n\n";
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const payload = entry.payload;
+    if (entry.type !== "response_item" || !payload) {
+      continue;
+    }
+    const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "";
+    const anchor = payload.call_id || `msg-${i}`;
+    if (payload.type === "message") {
+      const text = extractCodexText(payload.content);
+      if (!text.trim()) {
+        continue;
+      }
+      const roleLabel = payload.role === "user" ? "User" : "Agent";
+      output += `### **${roleLabel}** (${timestamp}) {#${anchor}}
+
+`;
+      output += `${text}
+
+`;
+    } else if (payload.type === "function_call" || payload.type === "custom_tool_call" || payload.type === "tool_search_call" || payload.type === "local_shell_call") {
+      const toolName = payload.name || payload.namespace || payload.type || "unknown";
+      output += `### **Tool Use** (${timestamp}) {#${anchor}}
+
+`;
+      output += `**Tool Use:** \`${toolName}\`
+
+`;
+      output += formatCodexToolInputMarkdown(codexToolInput(payload));
+    } else if (payload.type === "function_call_output" || payload.type === "custom_tool_call_output" || payload.type === "tool_search_output" || payload.type === "local_shell_call_output") {
+      const result = codexToolOutput(payload);
+      output += `### **Tool Result** (${timestamp}) {#${anchor}-result}
+
+`;
+      output += "**Result:**\n";
+      if (result.includes("\n") || result.length > 100) {
+        output += `\`\`\`
+${result}
+\`\`\`
+
+`;
+      } else {
+        output += `${result}
+
+`;
+      }
+    } else if (payload.type === "reasoning") {
+      const text = extractCodexText(payload.summary);
+      if (text.trim()) {
+        output += `### **Reasoning Summary** (${timestamp}) {#${anchor}}
+
+`;
+        output += `${text}
+
+`;
+      }
+    }
+  }
+  return output;
+}
 
 // src/version.ts
-var VERSION = "1.2.5";
+var VERSION = "1.4.1";
 
 // src/mcp-server.ts
 import fs4 from "fs";
@@ -26696,7 +26917,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "search",
-        description: `Gives you memory across sessions. You don't automatically remember past conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic search or array of 2-5 concepts for precise AND matching. Returns ranked results with project, date, snippets, and file paths.`,
+        description: `Gives you memory across sessions. You don't automatically remember past Claude Code and Codex conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic search or array of 2-5 concepts for precise AND matching. Returns ranked results with project, date, snippets, and file paths.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -26740,7 +26961,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           additionalProperties: false
         },
         annotations: {
-          title: "Show Full Conversation",
+          title: "Read Full Conversation",
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,

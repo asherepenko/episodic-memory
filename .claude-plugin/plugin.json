@@ -1,7 +1,7 @@
 {
   "name": "episodic-memory",
-  "version": "1.2.5",
-  "description": "Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.",
+  "version": "1.4.1",
+  "description": "Semantic search for Claude Code and Codex conversations. Remember past discussions, decisions, and patterns.",
   "author": {
     "name": "Andrew Sherepenko",
     "email": "andrew.sherepenko@gmail.com"

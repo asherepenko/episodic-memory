@@ -6,6 +6,8 @@ import { initDatabase } from './db.js';
 import { generateExchangeEmbedding, initEmbeddings } from './embeddings.js';
 import { runMigrationBatch, countStale } from './embedding-migration.js';
 import { spawn } from 'child_process';
+import fs from 'fs';
+import { formatLogLine, getSyncLogPath } from './logging.js';
 
 const args = process.argv.slice(2);
 
@@ -25,7 +27,7 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log(`
 Usage: episodic-memory sync [--background] [--limit <n>]
 
-Sync conversations from ~/.claude/projects to archive and index them.
+Sync conversations from Claude Code and Codex transcript directories to archive and index them.
 
 This command:
 1. Copies new or updated .jsonl files to conversation archive
@@ -85,6 +87,9 @@ const summaryLimit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10;
 // If background mode, fork the process and exit immediately
 if (isBackground) {
   const filteredArgs = args.filter(arg => arg !== '--background');
+  const logPath = getSyncLogPath();
+  const logFd = fs.openSync(logPath, 'a');
+  fs.writeSync(logFd, formatLogLine('info', `Starting background sync from pid ${process.pid}`));
 
   // Spawn a detached process
   const child = spawn(process.execPath, [
@@ -92,11 +97,11 @@ if (isBackground) {
     ...filteredArgs
   ], {
     detached: true,
-    stdio: 'ignore'
+    stdio: ['ignore', logFd, logFd]
   });
 
   child.unref(); // Allow parent to exit
-  console.log('Sync started in background...');
+  console.log(`Sync started in background. Log: ${logPath}`);
   process.exit(0);
 }
 
@@ -105,7 +110,7 @@ const destDir = getArchiveDir();
 
 if (sourceDirs.length === 0) {
   console.log('⚠️  No conversation source directories found.');
-  console.log('  Checked: ~/.claude/projects and ~/.claude/transcripts');
+  console.log('  Checked: ~/.claude/projects, ~/.claude/transcripts, and ~/.codex/sessions');
   if (process.env.CLAUDE_CONFIG_DIR) {
     console.log(`  CLAUDE_CONFIG_DIR is set to: ${process.env.CLAUDE_CONFIG_DIR}`);
   }

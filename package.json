@@ -1,7 +1,7 @@
 {
   "name": "episodic-memory",
-  "version": "1.2.5",
-  "description": "Semantic search for Claude Code conversations",
+  "version": "1.4.1",
+  "description": "Semantic search for Claude Code and Codex conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -19,10 +19,13 @@
     "postinstall": "npm rebuild better-sqlite3 2>/dev/null || true",
     "pretest": "npm run generate-version",
     "test": "vitest run",
+    "test:claude-e2e": "node scripts/claude-e2e.js",
+    "test:codex-e2e": "node scripts/codex-e2e.js",
     "test:watch": "vitest"
   },
   "keywords": [
     "claude-code",
+    "codex",
     "conversations",
     "search",
     "semantic-search",

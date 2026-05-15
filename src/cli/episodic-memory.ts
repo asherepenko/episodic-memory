@@ -31,17 +31,18 @@ function runScript(scriptPath: string, scriptArgs: string[]): Promise<void> {
 }
 
 function showHelp(): void {
-  console.log(`episodic-memory - Manage and search Claude Code conversations
+  console.log(`episodic-memory - Manage and search Claude Code and Codex conversations
 
 USAGE:
   episodic-memory <command> [options]
 
 COMMANDS:
-  sync        Sync conversations from ~/.claude/projects and index them
+  sync        Sync conversations from Claude Code and Codex and index them
   index       Index conversations for search
   search      Search indexed conversations
   show        Display a conversation in readable format
   stats       Show index statistics
+  doctor      Diagnose Claude Code or Codex integration issues
 
 Run 'episodic-memory <command> --help' for command-specific help.
 
@@ -79,6 +80,10 @@ async function main(): Promise<void> {
 
       case 'stats':
         await runScript(join(distDir, 'stats-cli.js'), args);
+        break;
+
+      case 'doctor':
+        await runScript(join(distDir, 'doctor-cli.js'), args);
         break;
 
       case 'sync':
