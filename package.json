@@ -1,6 +1,6 @@
 {
   "name": "episodic-memory",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Semantic search for Claude Code conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -35,22 +35,22 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.126",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.142",
     "@huggingface/transformers": "^4.2.0",
-    "@modelcontextprotocol/sdk": "^1.20.0",
-    "better-sqlite3": "^12.4.1",
-    "marked": "^16.4.0",
-    "sqlite-vec": "^0.1.7-alpha.2",
-    "zod": "^4.4.2"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.10.0",
+    "marked": "^18.0.3",
+    "sqlite-vec": "^0.1.9",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/marked": "^5.0.2",
-    "@types/node": "^24.7.0",
-    "esbuild": "^0.25.11",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "@types/marked": "^6.0.0",
+    "@types/node": "^25.8.0",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.22.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   },
   "repository": {
     "type": "git",

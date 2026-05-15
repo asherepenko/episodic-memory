@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] - 2026-05-15
+
+### Changed
+- **Dependency refresh.** Bumped runtime and dev dependencies to current releases: `@anthropic-ai/claude-agent-sdk` 0.3.x, `@modelcontextprotocol/sdk` 1.29, `better-sqlite3` 12.10, `marked` 18, `sqlite-vec` 0.1.9, `zod` 4.4.3, plus TypeScript 6, Vitest 4, esbuild 0.28, tsx 4.22, and `@types/node` 25. Full test suite (190 tests) passes against the new versions.
+- **TypeScript 6 compatibility.** Added `ignoreDeprecations: "6.0"` to `tsconfig.json` so the existing `moduleResolution: "node"` setting continues to compile cleanly until a future module-resolution overhaul.
+
 ## [1.2.4] - 2026-05-06
 
 ### Security
