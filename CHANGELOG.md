@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-05-18
+
+### Fixed
+- **SessionStart hook no longer crashes with `node:internal/modules/package_json_reader:301`.** Extension-less `cli/<name>` shims (introduced in v1.1.1's TS conversion) forced Node 26 to walk parent directories searching for a `package.json` `type` field to decide ESM vs CJS. Under wrappers that preload a CJS module via `NODE_OPTIONS=--require <preload.cjs>` (e.g. cmux-claude), that walk hits `package_json_reader:301` and aborts. Renamed all `cli/<name>` shims to `cli/<name>.mjs`: explicit ESM extension, no parent walk, robust under any preload.
+
+### Changed
+- `cli/episodic-memory`, `cli/index-conversations`, `cli/mcp-server`, `cli/search-conversations` → `cli/<name>.mjs`.
+- `package.json` `bin` entries, `hooks/hooks.json`, `.mcp.json`, `.claude-plugin/plugin.json`, and the matching test pins (`hooks.test.ts`, `codex-plugin.test.ts`, `codex-doctor.test.ts`) point at the new paths.
+
+### Tests
+- 230/231 passing (one pre-existing flaky multi-concept embedding ranking assertion unrelated to this change).
+
 ## [1.4.3] - 2026-05-18
 
 ### Changed

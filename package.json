@@ -1,14 +1,14 @@
 {
   "name": "episodic-memory",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Semantic search for Claude Code and Codex conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "episodic-memory": "./cli/episodic-memory",
-    "episodic-memory-index": "./cli/index-conversations",
-    "episodic-memory-search": "./cli/search-conversations",
-    "episodic-memory-mcp-server": "./cli/mcp-server"
+    "episodic-memory": "./cli/episodic-memory.mjs",
+    "episodic-memory-index": "./cli/index-conversations.mjs",
+    "episodic-memory-search": "./cli/search-conversations.mjs",
+    "episodic-memory-mcp-server": "./cli/mcp-server.mjs"
   },
   "scripts": {
     "generate-version": "node scripts/generate-version.js",

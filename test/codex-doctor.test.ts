@@ -7,7 +7,7 @@ describe('Codex doctor report', () => {
     const report = buildCodexDoctorReport({
       codexVersionOutput: 'codex-cli 0.130.0',
       featuresOutput: 'hooks stable true\nplugin_hooks under development true\nplugins stable true\n',
-      mcpListOutput: 'episodic-memory  node  ./cli/mcp-server  enabled',
+      mcpListOutput: 'episodic-memory  node  ./cli/mcp-server.mjs  enabled',
       codexHome: '/tmp/codex-home',
       sessionsDirExists: true,
       logPath: '/tmp/superpowers/logs/episodic-memory.log',
@@ -27,7 +27,7 @@ describe('Codex doctor report', () => {
     const report = buildCodexDoctorReport({
       codexVersionOutput: 'codex-cli 0.130.0',
       featuresOutput: 'hooks stable true\nplugin_hooks under development true\nplugins stable true\n',
-      mcpListOutput: 'episodic-memory  node  ./cli/mcp-server  enabled',
+      mcpListOutput: 'episodic-memory  node  ./cli/mcp-server.mjs  enabled',
       codexHome: '/tmp/codex-home',
       sessionsDirExists: true,
       logPath: '/tmp/superpowers/logs/episodic-memory.log',
@@ -44,7 +44,7 @@ describe('Codex doctor report', () => {
     const report = buildCodexDoctorReport({
       codexVersionOutput: 'codex-cli 0.130.0',
       featuresOutput: 'hooks stable true\nplugin_hooks under development true\nplugins stable true\n',
-      mcpListOutput: 'episodic-memory  node  ./cli/mcp-server  enabled',
+      mcpListOutput: 'episodic-memory  node  ./cli/mcp-server.mjs  enabled',
       codexHome: '/tmp/codex-home',
       sessionsDirExists: true,
       logPath: '/tmp/superpowers/logs/episodic-memory.log',

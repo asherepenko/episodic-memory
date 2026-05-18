@@ -3,7 +3,7 @@
     "episodic-memory": {
       "command": "node",
       "args": [
-        "./cli/mcp-server"
+        "./cli/mcp-server.mjs"
       ],
       "cwd": ".",
       "env_vars": [

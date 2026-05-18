@@ -1,6 +1,6 @@
 {
   "name": "episodic-memory",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Semantic search for Claude Code and Codex conversations. Remember past discussions, decisions, and patterns.",
   "author": {
     "name": "Andrew Sherepenko",
@@ -23,7 +23,7 @@
     "episodic-memory": {
       "command": "node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/cli/mcp-server"
+        "${CLAUDE_PLUGIN_ROOT}/cli/mcp-server.mjs"
       ],
       "env": {}
     }
