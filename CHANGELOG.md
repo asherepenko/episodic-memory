@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] - 2026-05-18
+
+### Fixed
+- **SessionStart hook no longer crashes during `/plugin install` and `/plugin update`.** The error reported as `node:internal/modules/package_json_reader:301` was actually `ERR_MODULE_NOT_FOUND` for `@anthropic-ai/claude-agent-sdk`: Claude Code fires the SessionStart hook the moment the install command unpacks the plugin tarball, **before** the synchronous `npm install` finishes writing `node_modules/`. The hook ran ~394ms after fire, hit a half-written `node_modules` tree, and aborted. `cli/episodic-memory.mjs` now checks for `node_modules/@anthropic-ai/claude-agent-sdk/package.json` when invoked as `sync --background` (the hook-only path) and exits silently if missing — the next SessionStart picks up once `npm install` finishes. Non-hook invocations (`search`, `index`, `show`, `stats`, `doctor`, foreground `sync`) propagate the real error as before.
+
+### Tests
+- New `test/hook-install-race.test.ts` builds a synthetic plugin root with an empty `node_modules` and asserts: (a) `sync --background` exits 0 silently, (b) other commands still surface failures, (c) once deps are present the shim spawns the child normally.
+- 234/234 passing.
+
+### Note
+- The `.mjs` rename in 1.4.4 was not the cause of the install-time error. Kept regardless: `.mjs` is the correct, explicit ESM declaration for the shims and removes the parent-`package.json` walk that older extension-less shims relied on.
+
 ## [1.4.4] - 2026-05-18
 
 ### Fixed

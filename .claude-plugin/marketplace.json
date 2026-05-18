@@ -9,7 +9,7 @@
     {
       "name": "episodic-memory",
       "description": "Semantic search for Claude Code and Codex conversations. Remember past discussions, decisions, and patterns.",
-      "version": "1.4.4",
+      "version": "1.4.5",
       "source": "./",
       "author": {
         "name": "Andrew Sherepenko",
