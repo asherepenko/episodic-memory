@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-05-18
+
+### Fixed
+- **SessionStart hook no longer crashes with `MODULE_NOT_FOUND`** (fork). The hook in `hooks/hooks.json` was pointing at `cli/episodic-memory.js`, but the fork's v1.1.1 TypeScript conversion (commit `1afad4c`) renamed the JS shims to extension-less names (`cli/episodic-memory`). Two upstream commits (`61bc474`, `da18d8d`) later restructured the hook command but kept the stale `.js` suffix, since upstream still ships the `.js` filename. Hook now invokes `cli/episodic-memory` directly.
+- **Codex MCP server boot no longer fails** (fork). `.mcp.json` (added during the v1.4.1 upstream merge) referenced a non-existent `./cli/mcp-server-wrapper.js`. Pointed at the compiled `./dist/cli/mcp-server-wrapper.js`, matching the path already used in `.claude-plugin/plugin.json`.
+
+### Tests
+- `test/hooks.test.ts` and `test/codex-plugin.test.ts` now `existsSync()` the referenced script paths instead of only string-matching, so a path/file mismatch fails the suite locally rather than only at SessionStart inside a real install.
+- 231/231 passing.
+
 ## [1.4.1] - 2026-05-15
 
 Fork release synchronized with upstream `obra/episodic-memory` 1.3.0–1.4.0. Numbering is one patch above the highest upstream version (1.4.0) so fork releases never collide with upstream tags.
