@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-05-18
+
+### Changed
+- **MCP server configs now point at the `cli/` shim, not the compiled `dist/`.** Both `.claude-plugin/plugin.json` and `.mcp.json` previously referenced `dist/cli/mcp-server-wrapper.js` directly. They now use `cli/mcp-server`, matching the same shim-as-public-surface convention used by the SessionStart hook fix in 1.4.2. If `dist/` layout ever changes (output dir rename, bundler swap), the shim absorbs the change and the configs keep working.
+
+### Tests
+- `test/codex-plugin.test.ts` updated to pin the new shim path.
+- `test/codex-doctor.test.ts` fixtures updated to match.
+- 231/231 passing.
+
 ## [1.4.2] - 2026-05-18
 
 ### Fixed
