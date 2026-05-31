@@ -29,6 +29,23 @@ export class SummarizerSdkError extends Error {
 export function isResumeFailure(error) {
     return error instanceof SummarizerSdkError && error.subtype === 'error_during_execution';
 }
+/**
+ * Whether an SDK `type: 'result'` message represents a hard error.
+ *
+ * Only non-success subtypes (error_during_execution, error_max_turns, …) are
+ * errors. A `subtype: 'success'` result can still carry `is_error: true` — an
+ * independent boolean the SDK sets for a transient API issue on an otherwise
+ * completed turn — and its `result` text is usable, handled by the normal
+ * result path (including the thinking-budget retry). Throwing on that flag
+ * regressed summarization in 1.4.6 ("Summarizer SDK error: success"), so the
+ * discriminant is the subtype, not is_error.
+ */
+export function isSdkErrorResult(message) {
+    if (!message || typeof message !== 'object')
+        return false;
+    const subtype = message.subtype;
+    return typeof subtype === 'string' && subtype !== 'success';
+}
 function getCallTimeoutMs() {
     const raw = process.env.EPISODIC_MEMORY_API_TIMEOUT_MS;
     const parsed = raw ? parseInt(raw, 10) : NaN;
@@ -181,10 +198,12 @@ async function callClaude(prompt, sessionId, useFallback = false, cwd) {
         });
         for await (const message of iterator) {
             if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
-                // Throw on is_error — otherwise we return `message.result` (undefined)
-                // and the resume-failure fallback never fires (#93).
-                if (message.is_error) {
-                    throw new SummarizerSdkError(message.subtype || 'unknown', message.session_id);
+                // Throw only on a real error subtype — otherwise we'd return
+                // `message.result` (undefined) and the resume-failure fallback never
+                // fires (#93). A success result carrying is_error:true is NOT an error
+                // here; its result text is handled below.
+                if (isSdkErrorResult(message)) {
+                    throw new SummarizerSdkError(message.subtype, message.session_id);
                 }
                 const result = message.result;
                 const elapsed = Date.now() - startedAt;
@@ -666,10 +685,11 @@ class HierarchicalSession {
                 }
                 const m = value;
                 if (m && m.type === 'result') {
-                    // Surface SDK-reported failures (e.g. failed resume) instead of
-                    // returning an undefined result (#93).
-                    if (m.is_error) {
-                        throw new SummarizerSdkError(m.subtype || 'unknown', m.session_id);
+                    // Surface real error subtypes (e.g. failed resume) instead of
+                    // returning an undefined result (#93). A success result with
+                    // is_error:true is not an error here.
+                    if (isSdkErrorResult(m)) {
+                        throw new SummarizerSdkError(m.subtype, m.session_id);
                     }
                     const result = m.result;
                     log.debug(`HierarchicalSession turn ${this.turnsSent} done in ${Date.now() - startedAt}ms`);

@@ -5,6 +5,9 @@ import {
   getApiEnv,
   runCodexCommand,
   shouldSkipReentrantSync,
+  isSdkErrorResult,
+  isResumeFailure,
+  SummarizerSdkError,
 } from '../src/summarizer.js';
 
 describe('buildCodexSummarizerCommand', () => {
@@ -161,5 +164,33 @@ describe('shouldSkipReentrantSync', () => {
     expect(shouldSkipReentrantSync()).toBe(false);
     process.env.EPISODIC_MEMORY_SUMMARIZER_GUARD = 'true';
     expect(shouldSkipReentrantSync()).toBe(false);
+  });
+});
+
+describe('isSdkErrorResult (#regression: 1.4.6 "SDK error: success")', () => {
+  it('does NOT flag a success result even when is_error is true', () => {
+    // SDK 0.3.142: a subtype:'success' result can carry is_error:true on an
+    // otherwise completed turn; its result text is usable and must be kept.
+    expect(isSdkErrorResult({ type: 'result', subtype: 'success', is_error: true, result: 'ok' })).toBe(false);
+    expect(isSdkErrorResult({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })).toBe(false);
+  });
+
+  it('flags real error subtypes', () => {
+    expect(isSdkErrorResult({ type: 'result', subtype: 'error_during_execution', is_error: true })).toBe(true);
+    expect(isSdkErrorResult({ type: 'result', subtype: 'error_max_turns', is_error: true })).toBe(true);
+  });
+
+  it('ignores non-result/partial messages with no subtype', () => {
+    expect(isSdkErrorResult({ type: 'assistant' })).toBe(false);
+    expect(isSdkErrorResult(null)).toBe(false);
+    expect(isSdkErrorResult(undefined)).toBe(false);
+  });
+});
+
+describe('isResumeFailure', () => {
+  it('is true only for error_during_execution SummarizerSdkError', () => {
+    expect(isResumeFailure(new SummarizerSdkError('error_during_execution', 's1'))).toBe(true);
+    expect(isResumeFailure(new SummarizerSdkError('error_max_turns', 's1'))).toBe(false);
+    expect(isResumeFailure(new Error('error_during_execution'))).toBe(false);
   });
 });

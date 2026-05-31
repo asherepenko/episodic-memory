@@ -14,6 +14,18 @@ export declare class SummarizerSdkError extends Error {
  * the session — the trigger for the non-resume fallback in summarizeConversation.
  */
 export declare function isResumeFailure(error: unknown): boolean;
+/**
+ * Whether an SDK `type: 'result'` message represents a hard error.
+ *
+ * Only non-success subtypes (error_during_execution, error_max_turns, …) are
+ * errors. A `subtype: 'success'` result can still carry `is_error: true` — an
+ * independent boolean the SDK sets for a transient API issue on an otherwise
+ * completed turn — and its `result` text is usable, handled by the normal
+ * result path (including the thinking-budget retry). Throwing on that flag
+ * regressed summarization in 1.4.6 ("Summarizer SDK error: success"), so the
+ * discriminant is the subtype, not is_error.
+ */
+export declare function isSdkErrorResult(message: unknown): boolean;
 export declare class SummarizerTimeoutError extends Error {
     constructor(timeoutMs: number);
 }
