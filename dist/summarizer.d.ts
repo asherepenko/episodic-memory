@@ -29,15 +29,6 @@ export declare function isSdkErrorResult(message: unknown): boolean;
 export declare class SummarizerTimeoutError extends Error {
     constructor(timeoutMs: number);
 }
-export interface CodexSummarizerCommand {
-    command: string;
-    args: string[];
-    prompt: string;
-    sessionId: string;
-    model?: string;
-    versionArgs?: string[];
-    skipVersionCheck?: boolean;
-}
 export declare function getApiEnv(): Record<string, string | undefined> | undefined;
 /**
  * Detect whether the current process is running inside the Claude Agent SDK
@@ -47,14 +38,6 @@ export declare function getApiEnv(): Record<string, string | undefined> | undefi
  */
 export declare function shouldSkipReentrantSync(): boolean;
 export declare function formatConversationText(exchanges: ConversationExchange[]): string;
-export declare function buildCodexSummaryPrompt(): string;
-export declare function buildCodexSummarizerCommand(args: {
-    sessionId: string;
-    prompt: string;
-    model?: string;
-    codexBin?: string;
-}): CodexSummarizerCommand;
-export declare function runCodexCommand(command: CodexSummarizerCommand): Promise<string>;
 /**
  * Resolve the model to pass into Codex `thread/fork` for summarization.
  *

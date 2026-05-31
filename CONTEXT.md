@@ -36,6 +36,12 @@ The summary content `Same session as <ref> (cosine=...)` written when a fresh su
 
 _Avoid_: treating dedup as a state — it is a content transform applied to a `Complete` summary.
 
+## Codex summarizer
+
+The Codex-native path for producing a **Summary** of a Codex-originated Conversation. Lives in `src/codex-summarizer.ts` and speaks the Codex `app-server` JSON-RPC protocol: it forks the recorded session ephemerally (`thread/fork`, read-only sandbox), runs one summarization turn (`turn/start`), and returns the agent message text. Exposed to the summarization domain through the deep entry point `runCodexSummary(sessionId, prompt, model?, codexBin?)` — a session-in / text-out interface that hides the transport plumbing (`runCodexCommand`, `buildCodexSummarizerCommand`, version-floor check, turn lifecycle). `summarizer.ts` owns only the **Codex→Claude fallback** decision: try the Codex summarizer when the Conversation's harness is `codex`, otherwise (or on any failure) fall back to the Claude SDK tiers.
+
+_Avoid_: "Codex client", "Codex adapter" — the term names the summarization path, not a generic API wrapper.
+
 ## SyncState
 
 The lifecycle of a single Conversation through the sync pipeline. Persisted as a per-conversation sidecar `<conv>.sync.json` next to the archived `.jsonl`. Owned by the `ConversationSyncState` module.

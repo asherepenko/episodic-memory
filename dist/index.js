@@ -6,4 +6,5 @@ export * from './indexer.js';
 export * from './parser.js';
 export * from './search.js';
 export * from './summarizer.js';
+export * from './codex-summarizer.js';
 export * from './paths.js';
