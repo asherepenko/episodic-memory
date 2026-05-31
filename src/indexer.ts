@@ -7,7 +7,25 @@ import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
 import { ConversationExchange } from './types.js';
 import { getArchiveDir, getExcludedProjects, getConversationSourceDirs, findJsonlFiles } from './paths.js';
-import { formatErrorSentinel, shouldQueueForSummary } from './summary-sentinel.js';
+import {
+  openConversationSyncStateStore,
+  isRetriable,
+  type SyncState,
+} from './sync/conversation-sync-state.js';
+
+/**
+ * Queue decision for the indexer path, driven by ConversationSyncState.
+ *
+ * Complete → already summarized, skip. Poison past the retry threshold
+ * (isRetriable false) → skip. Everything else (pending/stale/inProgress, and
+ * still-retriable poison) → queue. This replaces the legacy
+ * `shouldQueueForSummary('-summary.txt')` gating; the sidecar is the sole
+ * queue/retry authority.
+ */
+export function shouldQueueForSummaryState(state: SyncState): boolean {
+  if (state.kind === 'complete') return false;
+  return isRetriable(state);
+}
 
 // Set max output tokens for Claude SDK (used by summarizer)
 process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '20000';
@@ -71,6 +89,8 @@ export async function indexConversations(
 
   let totalExchanges = 0;
   let conversationsProcessed = 0;
+
+  const store = openConversationSyncStateStore();
 
   const excludedProjects = getExcludedProjects();
   const excludedDirSet = new Set(excludedProjects);
@@ -143,7 +163,12 @@ export async function indexConversations(
 
     // Batch summarize conversations in parallel (unless --no-summaries)
     if (!noSummaries) {
-      const needsSummary = toProcess.filter(c => shouldQueueForSummary(c.summaryPath));
+      // Queue decision is driven by ConversationSyncState (the sidecar), not by
+      // the presence/content of -summary.txt. store.load() migrates any legacy
+      // -summary.txt into a Complete/Stale state on first read.
+      const needsSummary = toProcess.filter(c =>
+        shouldQueueForSummaryState(store.load(c.archivePath))
+      );
 
       if (needsSummary.length > 0) {
         console.log(`  Generating ${needsSummary.length} summaries (concurrency: ${concurrency})...`);
@@ -152,12 +177,15 @@ export async function indexConversations(
           try {
             const summary = await summarizeConversation(conv.exchanges, sessionIdForSummary(conv.exchanges));
             fs.writeFileSync(conv.summaryPath, summary, 'utf-8');
+            store.clearFailure(conv.archivePath);
+            store.save(conv.archivePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
             const wordCount = summary.split(/\s+/).length;
             console.log(`  ✓ ${conv.file}: ${wordCount} words`);
             return summary;
           } catch (error) {
-            // Write an error sentinel so the failure is retryable on a later run (#96).
-            try { fs.writeFileSync(conv.summaryPath, formatErrorSentinel(error), 'utf-8'); } catch {}
+            // Record the failure in SyncState so it is retryable on a later run
+            // (and eventually poisoned past the retry threshold) (#96).
+            store.recordFailure(conv.archivePath, error instanceof Error ? error.message : String(error));
             console.log(`  ✗ ${conv.file}: ${error}`);
             return null;
           }
@@ -240,17 +268,21 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
       const exchanges = await parseConversation(sourcePath, project, archivePath);
 
       if (exchanges.length > 0) {
-        // Generate summary (unless --no-summaries)
+        // Generate summary (unless --no-summaries). Queue decision and failure
+        // recording both flow through ConversationSyncState.
         const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
-        if (!noSummaries && shouldQueueForSummary(summaryPath)) {
+        const store = openConversationSyncStateStore();
+        if (!noSummaries && shouldQueueForSummaryState(store.load(archivePath))) {
           fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
           try {
             const summary = await summarizeConversation(exchanges, sessionIdForSummary(exchanges));
             fs.writeFileSync(summaryPath, summary, 'utf-8');
+            store.clearFailure(archivePath);
+            store.save(archivePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
             console.log(`Summary: ${summary.split(/\s+/).length} words`);
           } catch (error) {
-            // Write an error sentinel so the failure is retryable on a later run (#96).
-            try { fs.writeFileSync(summaryPath, formatErrorSentinel(error), 'utf-8'); } catch {}
+            // Record the failure in SyncState so it is retryable on a later run (#96).
+            store.recordFailure(archivePath, error instanceof Error ? error.message : String(error));
             console.log(`Summary failed: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
@@ -288,6 +320,8 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
 
   const db = initDatabase();
   await initEmbeddings();
+
+  const store = openConversationSyncStateStore();
 
   const sourceDirs = getConversationSourceDirs();
   const ARCHIVE_DIR = getArchiveDir();
@@ -360,7 +394,9 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
 
   // Batch process summaries (unless --no-summaries)
   if (!noSummaries) {
-    const needsSummary = unprocessed.filter(c => shouldQueueForSummary(c.summaryPath));
+    const needsSummary = unprocessed.filter(c =>
+      shouldQueueForSummaryState(store.load(c.archivePath))
+    );
     if (needsSummary.length > 0) {
       console.log(`Generating ${needsSummary.length} summaries (concurrency: ${concurrency})...\n`);
 
@@ -368,12 +404,14 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
         try {
           const summary = await summarizeConversation(conv.exchanges, sessionIdForSummary(conv.exchanges));
           fs.writeFileSync(conv.summaryPath, summary, 'utf-8');
+          store.clearFailure(conv.archivePath);
+          store.save(conv.archivePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
           const wordCount = summary.split(/\s+/).length;
           console.log(`  ✓ ${conv.project}/${conv.file}: ${wordCount} words`);
           return summary;
         } catch (error) {
-          // Write an error sentinel so the failure is retryable on a later run (#96).
-          try { fs.writeFileSync(conv.summaryPath, formatErrorSentinel(error), 'utf-8'); } catch {}
+          // Record the failure in SyncState so it is retryable on a later run (#96).
+          store.recordFailure(conv.archivePath, error instanceof Error ? error.message : String(error));
           console.log(`  ✗ ${conv.project}/${conv.file}: ${error}`);
           return null;
         }
