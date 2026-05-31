@@ -169,8 +169,14 @@ async function syncAll() {
 }
 const MIGRATION_BATCH_SIZE = parseInt(process.env.EPISODIC_MEMORY_MIGRATION_BATCH || '500', 10);
 async function runEmbeddingMigrationPhase() {
-    const db = initDatabase();
+    // initDatabase() must be inside the try: opening the DB loads the sqlite-vec
+    // native extension, which can throw transiently (e.g. a partial install
+    // during `/plugin update`, before the platform dylib has landed). That must
+    // log-and-skip the optional migration, never abort the whole sync and exit 1
+    // — which would discard the summaries already completed this run.
+    let db;
     try {
+        db = initDatabase();
         const stale = countStale(db);
         if (stale === 0)
             return;
@@ -187,7 +193,7 @@ async function runEmbeddingMigrationPhase() {
         console.error('episodic-memory: migration phase error:', err instanceof Error ? err.message : err);
     }
     finally {
-        db.close();
+        db?.close();
     }
 }
 syncAll()

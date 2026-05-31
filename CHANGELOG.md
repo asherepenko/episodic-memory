@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.8] - 2026-06-01
+
+### Fixed
+- **A transient database error no longer aborts the whole sync.** The embedding-migration step opened the database — which loads the native `sqlite-vec` extension — *outside* its error handler. If that load failed (most likely during a `/plugin update`, in the brief window after a package landed but before its platform binary did), the entire sync crashed with `SqliteError` and exited non-zero, discarding the summaries it had already completed that run. The migration step is best-effort, so a database/extension load failure now logs and skips it — summaries and indexing for the run are preserved, and migration resumes on the next sync. (Per-conversation summary failures during such a window were already retried automatically, so they self-heal once the install completes.)
+
 ## [1.4.7] - 2026-05-31
 
 ### Fixed
