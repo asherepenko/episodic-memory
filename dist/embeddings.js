@@ -18,6 +18,16 @@ env.useBrowserCache = false;
 const MODEL_ID = 'Xenova/bge-small-en-v1.5';
 const MODEL_DTYPE = 'q8';
 export const BGE_QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
+/**
+ * Bump when ANYTHING in the embedding pipeline changes (model, dtype, prefix,
+ * pooling, normalization, truncation). This is the single source of truth —
+ * `embedding-migration.ts` and `db.ts` import it from here. Bumping triggers
+ * automatic re-embedding of stale rows on upgrade (see CLAUDE.md).
+ *
+ * Co-located with the pipeline it versions so the version and the behavior it
+ * describes can never drift into separate files.
+ */
+export const EMBEDDING_VERSION = 1;
 let embeddingPipeline = null;
 export async function initEmbeddings() {
     if (!embeddingPipeline) {
@@ -80,3 +90,36 @@ export async function generateExchangeEmbedding(userMessage, assistantMessage, t
     }
     return generateEmbedding(combined);
 }
+/**
+ * Convert an L2 (Euclidean) distance between two unit-normalized vectors
+ * into a cosine similarity in [-1, 1].
+ *
+ * For unit vectors u, v:  ||u - v||^2 = 2 - 2 * cos(u, v)
+ * Therefore:               cos(u, v) = 1 - d^2 / 2
+ *
+ * Embeddings produced by this module are L2-normalized at extraction time
+ * (`normalize: true` in `generateEmbedding`), so the L2 distance returned by
+ * sqlite-vec satisfies the unit-vector identity. Co-located with the
+ * normalization it depends on so the invariant is structural: if normalization
+ * ever changes here, this formula sits right beside it.
+ */
+function distanceToSimilarity(distance) {
+    const similarity = 1 - (distance * distance) / 2;
+    return Math.max(-1, Math.min(1, similarity));
+}
+/**
+ * The consolidated embedding pipeline. Co-locates model config, normalization,
+ * version, and the distance->similarity formula behind one object so the
+ * normalize<->cosine invariant is structural rather than spread across files.
+ *
+ * - `version`              — the embedding pipeline version (EMBEDDING_VERSION)
+ * - `generate`             — passage/document embedding (no query prefix)
+ * - `generateQuery`        — query embedding (adds the asymmetric BGE prefix)
+ * - `distanceToSimilarity` — sqlite-vec L2 distance -> cosine similarity
+ */
+export const EMBEDDER = {
+    version: EMBEDDING_VERSION,
+    generate: generateExchangeEmbedding,
+    generateQuery: generateQueryEmbedding,
+    distanceToSimilarity,
+};

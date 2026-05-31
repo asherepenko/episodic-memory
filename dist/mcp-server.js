@@ -24713,6 +24713,67 @@ function getDbPath() {
   return path.join(getIndexDir(), "db.sqlite");
 }
 
+// src/embeddings.ts
+import { pipeline, env } from "@huggingface/transformers";
+env.allowLocalModels = true;
+env.useBrowserCache = false;
+var MODEL_ID = "Xenova/bge-small-en-v1.5";
+var MODEL_DTYPE = "q8";
+var BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
+var EMBEDDING_VERSION = 1;
+var embeddingPipeline = null;
+async function initEmbeddings() {
+  if (!embeddingPipeline) {
+    console.error("Loading embedding model (first run may take time)...");
+    embeddingPipeline = await pipeline(
+      "feature-extraction",
+      MODEL_ID,
+      { dtype: MODEL_DTYPE, progress_callback: () => {
+      } }
+    );
+    console.error("Embedding model loaded");
+  }
+}
+async function generateEmbedding(text) {
+  if (!embeddingPipeline) {
+    await initEmbeddings();
+  }
+  const truncated = text.substring(0, 2e3);
+  const output = await embeddingPipeline(truncated, {
+    pooling: "mean",
+    normalize: true
+  });
+  return Array.from(output.data);
+}
+function withQueryPrefix(query) {
+  if (query.startsWith(BGE_QUERY_PREFIX)) return query;
+  return BGE_QUERY_PREFIX + query;
+}
+async function generateQueryEmbedding(query) {
+  return generateEmbedding(withQueryPrefix(query));
+}
+async function generateExchangeEmbedding(userMessage, assistantMessage, toolNames) {
+  let combined = `User: ${userMessage}
+
+Assistant: ${assistantMessage}`;
+  if (toolNames && toolNames.length > 0) {
+    combined += `
+
+Tools: ${toolNames.join(", ")}`;
+  }
+  return generateEmbedding(combined);
+}
+function distanceToSimilarity(distance) {
+  const similarity = 1 - distance * distance / 2;
+  return Math.max(-1, Math.min(1, similarity));
+}
+var EMBEDDER = {
+  version: EMBEDDING_VERSION,
+  generate: generateExchangeEmbedding,
+  generateQuery: generateQueryEmbedding,
+  distanceToSimilarity
+};
+
 // src/db.ts
 function migrateSchema(db) {
   const columns = db.prepare(`SELECT name FROM pragma_table_info('exchanges')`).all();
@@ -24871,45 +24932,6 @@ function initDatabase() {
   return db;
 }
 
-// src/embeddings.ts
-import { pipeline, env } from "@huggingface/transformers";
-env.allowLocalModels = true;
-env.useBrowserCache = false;
-var MODEL_ID = "Xenova/bge-small-en-v1.5";
-var MODEL_DTYPE = "q8";
-var BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
-var embeddingPipeline = null;
-async function initEmbeddings() {
-  if (!embeddingPipeline) {
-    console.error("Loading embedding model (first run may take time)...");
-    embeddingPipeline = await pipeline(
-      "feature-extraction",
-      MODEL_ID,
-      { dtype: MODEL_DTYPE, progress_callback: () => {
-      } }
-    );
-    console.error("Embedding model loaded");
-  }
-}
-async function generateEmbedding(text) {
-  if (!embeddingPipeline) {
-    await initEmbeddings();
-  }
-  const truncated = text.substring(0, 2e3);
-  const output = await embeddingPipeline(truncated, {
-    pooling: "mean",
-    normalize: true
-  });
-  return Array.from(output.data);
-}
-function withQueryPrefix(query) {
-  if (query.startsWith(BGE_QUERY_PREFIX)) return query;
-  return BGE_QUERY_PREFIX + query;
-}
-async function generateQueryEmbedding(query) {
-  return generateEmbedding(withQueryPrefix(query));
-}
-
 // src/summary-sentinel.ts
 var ERROR_MARKER = "__ERRORED__";
 var ERROR_MARKER_PREFIX = `${ERROR_MARKER}
@@ -24999,10 +25021,6 @@ function exchangeFromRow(row) {
     thinkingTriggers: row.thinking_triggers || void 0
   };
 }
-function l2DistanceToCosineSimilarity(distance) {
-  const similarity = 1 - distance * distance / 2;
-  return Math.max(-1, Math.min(1, similarity));
-}
 function validateISODate(dateStr, paramName) {
   const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!isoDateRegex.test(dateStr)) {
@@ -25084,7 +25102,7 @@ async function searchConversations(query, options = {}) {
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
     return {
       exchange,
-      similarity: mode === "text" ? void 0 : l2DistanceToCosineSimilarity(row.distance),
+      similarity: mode === "text" ? void 0 : EMBEDDER.distanceToSimilarity(row.distance),
       snippet,
       summary
     };

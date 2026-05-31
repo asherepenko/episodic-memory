@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import * as sqliteVec from 'sqlite-vec';
 import { getDbPath } from './paths.js';
-import { EMBEDDING_VERSION } from './embedding-migration.js';
+import { EMBEDDING_VERSION } from './embeddings.js';
 
 export function migrateSchema(db: Database.Database): void {
   const columns = db.prepare(`SELECT name FROM pragma_table_info('exchanges')`).all() as Array<{ name: string }>;

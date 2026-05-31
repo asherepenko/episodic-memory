@@ -6,7 +6,7 @@
  * provides the primitives for an incremental, lock-protected, resumable
  * background migration that re-embeds stale rows in batches during sync.
  *
- *   EMBEDDING_VERSION   — bumped any time the encoder pipeline changes
+ *   EMBEDDING_VERSION   — re-exported from the Embedder (src/embeddings.ts)
  *   acquire/release lock — file-based with PID-liveness fallback
  *   pickStaleBatch       — find rows whose embedding_version is behind
  *   recordReembedded     — atomic update of vec_exchanges + version bump
@@ -15,9 +15,15 @@
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
+import { EMBEDDING_VERSION } from './embeddings.js';
 
-/** Bump when anything in the embedding pipeline changes (model, dtype, prefix). */
-export const EMBEDDING_VERSION = 1;
+/**
+ * EMBEDDING_VERSION is owned by the Embedder (`src/embeddings.ts`), co-located
+ * with the pipeline it versions. Re-exported here for backward compatibility
+ * with existing importers; this module only orchestrates the batch/lock
+ * migration mechanics.
+ */
+export { EMBEDDING_VERSION };
 
 export interface MigrationLockHandle {
   path: string;

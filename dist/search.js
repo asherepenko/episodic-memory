@@ -1,5 +1,5 @@
 import { initDatabase } from './db.js';
-import { initEmbeddings, generateQueryEmbedding } from './embeddings.js';
+import { initEmbeddings, generateQueryEmbedding, EMBEDDER } from './embeddings.js';
 import { isErroredSentinel } from './summary-sentinel.js';
 import fs from 'fs';
 import readline from 'readline';
@@ -87,18 +87,14 @@ function exchangeFromRow(row) {
     };
 }
 /**
- * Convert an L2 (Euclidean) distance between two unit-normalized vectors
- * into a cosine similarity in [-1, 1].
+ * Convert an L2 (Euclidean) distance from sqlite-vec into a cosine similarity.
  *
- * For unit vectors u, v:  ||u - v||^2 = 2 - 2 * cos(u, v)
- * Therefore:               cos(u, v) = 1 - d^2 / 2
- *
- * Embeddings written by src/embeddings.ts are normalized at write time, so
- * the L2 distance returned by sqlite-vec satisfies the unit-vector identity.
+ * The math lives in the Embedder (`EMBEDDER.distanceToSimilarity`), co-located
+ * with the normalization it depends on. This thin wrapper preserves the
+ * historical export name for callers and tests.
  */
 export function l2DistanceToCosineSimilarity(distance) {
-    const similarity = 1 - (distance * distance) / 2;
-    return Math.max(-1, Math.min(1, similarity));
+    return EMBEDDER.distanceToSimilarity(distance);
 }
 function validateISODate(dateStr, paramName) {
     const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -190,7 +186,7 @@ export async function searchConversations(query, options = {}) {
         const snippet = snippetText + (exchange.userMessage.length > 200 ? '...' : '');
         return {
             exchange,
-            similarity: mode === 'text' ? undefined : l2DistanceToCosineSimilarity(row.distance),
+            similarity: mode === 'text' ? undefined : EMBEDDER.distanceToSimilarity(row.distance),
             snippet,
             summary
         };

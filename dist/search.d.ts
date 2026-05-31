@@ -9,14 +9,11 @@ export interface SearchOptions {
     git_branch?: string;
 }
 /**
- * Convert an L2 (Euclidean) distance between two unit-normalized vectors
- * into a cosine similarity in [-1, 1].
+ * Convert an L2 (Euclidean) distance from sqlite-vec into a cosine similarity.
  *
- * For unit vectors u, v:  ||u - v||^2 = 2 - 2 * cos(u, v)
- * Therefore:               cos(u, v) = 1 - d^2 / 2
- *
- * Embeddings written by src/embeddings.ts are normalized at write time, so
- * the L2 distance returned by sqlite-vec satisfies the unit-vector identity.
+ * The math lives in the Embedder (`EMBEDDER.distanceToSimilarity`), co-located
+ * with the normalization it depends on. This thin wrapper preserves the
+ * historical export name for callers and tests.
  */
 export declare function l2DistanceToCosineSimilarity(distance: number): number;
 export declare function searchConversations(query: string, options?: SearchOptions): Promise<SearchResult[]>;
