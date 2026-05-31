@@ -3,7 +3,6 @@ import path from 'path';
 import { parseConversation } from './parser.js';
 import { initDatabase, getAllExchanges, getFileLastIndexed } from './db.js';
 import { getArchiveDir, getExcludedProjects, findJsonlFiles } from './paths.js';
-import { isErroredSentinel } from './summary-sentinel.js';
 
 export interface VerificationResult {
   missing: Array<{ path: string; reason: string }>;
@@ -61,15 +60,11 @@ export async function verifyIndex(): Promise<VerificationResult> {
 
       const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
 
-      // Check for missing or errored summary. An error sentinel (#96) means a
-      // previous summarization failed — verify treats it as "missing" so repair
-      // re-attempts it rather than reporting the conversation as healthy.
+      // A missing summary file means the conversation hasn't been summarized
+      // yet. Error/retry state lives in ConversationSyncState (Poison), not in
+      // the file; here we only care whether the derived summary exists.
       if (!fs.existsSync(summaryPath)) {
         result.missing.push({ path: conversationPath, reason: 'No summary file' });
-        continue;
-      }
-      if (isErroredSentinel(fs.readFileSync(summaryPath, 'utf-8'))) {
-        result.missing.push({ path: conversationPath, reason: 'Previous summarization failed (error sentinel)' });
         continue;
       }
 

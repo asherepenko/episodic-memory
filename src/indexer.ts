@@ -18,9 +18,8 @@ import {
  *
  * Complete → already summarized, skip. Poison past the retry threshold
  * (isRetriable false) → skip. Everything else (pending/stale/inProgress, and
- * still-retriable poison) → queue. This replaces the legacy
- * `shouldQueueForSummary('-summary.txt')` gating; the sidecar is the sole
- * queue/retry authority.
+ * still-retriable poison) → queue. The sidecar is the sole queue/retry
+ * authority; the `-summary.txt` file is pure derived content.
  */
 export function shouldQueueForSummaryState(state: SyncState): boolean {
   if (state.kind === 'complete') return false;

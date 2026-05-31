@@ -24932,14 +24932,6 @@ function initDatabase() {
   return db;
 }
 
-// src/summary-sentinel.ts
-var ERROR_MARKER = "__ERRORED__";
-var ERROR_MARKER_PREFIX = `${ERROR_MARKER}
-`;
-function isErroredSentinel(content) {
-  return content.startsWith(ERROR_MARKER_PREFIX);
-}
-
 // src/search.ts
 import fs3 from "fs";
 import readline from "readline";
@@ -25093,10 +25085,7 @@ async function searchConversations(query, options = {}) {
     const summaryPath = row.archive_path.replace(".jsonl", "-summary.txt");
     let summary;
     if (fs3.existsSync(summaryPath)) {
-      const raw = fs3.readFileSync(summaryPath, "utf-8");
-      if (!isErroredSentinel(raw)) {
-        summary = raw.trim();
-      }
+      summary = fs3.readFileSync(summaryPath, "utf-8").trim();
     }
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");

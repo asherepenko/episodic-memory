@@ -28,7 +28,9 @@ _Avoid_: "workspace", "repo".
 
 A single rendered text artifact at `<conv>-summary.txt` next to the Conversation's archived `.jsonl`. Produced by hierarchical summarization of all Exchanges. May be replaced by a **Dedup pointer** when near-identical to a sibling summary.
 
-_Avoid_: "abstract", "digest".
+Pure **derived content**: the file holds a real summary or is absent. It carries no lifecycle, error, or retry signal — that is owned entirely by **SyncState** (`Poison` for failures). Readers treat its presence as "summarized", its absence as "not yet"; there is no in-file error marker.
+
+_Avoid_: "abstract", "digest". Do not treat the file as a state marker — the `-summary.txt` sentinel (`__ERRORED__`) was retired; SyncState is the sole authority.
 
 ## Dedup pointer
 
