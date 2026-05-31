@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Summaries no longer fail with `Summarizer SDK error: success`.** The resume-failure detection added in 1.4.6 (#93) threw on any result the Claude Agent SDK flagged with `is_error: true`. But a successfully completed turn (`subtype: 'success'`) can still carry `is_error: true` for a transient API hiccup while returning perfectly usable summary text — so a fraction of conversations failed and re-queued on every sync. Failures are now keyed off the result *subtype* (`error_during_execution`, `error_max_turns`, …), never the `is_error` flag on a success, so those summaries succeed (or fall through to the existing model-fallback retry). The 1.4.6 resume-without-cwd fallback is unaffected — it keys off `error_during_execution`, which is still detected.
 
+## [1.4.6] - 2026-05-31
 
 Merged the install, sync, and summarization robustness fixes from upstream `obra/episodic-memory` 1.4.1–1.4.2, adapted to this fork's TypeScript codebase and SQLite sync-state model.
 
