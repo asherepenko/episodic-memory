@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.9] - 2026-06-01
+
+### Changed
+- **Dropped the deprecated `@types/marked` dev dependency.** `marked` (v18) ships its own type definitions, so the separate `@types/marked` stub was redundant and emitted a deprecation warning on every `npm install`. Removing it makes the install output a little cleaner with no functional change. (The remaining `prebuild-install` and `boolean` deprecation warnings come from transitive dependencies of `better-sqlite3` and `onnxruntime-node` respectively — not directly fixable here; they clear when those upstreams update.)
+
 ## [1.4.8] - 2026-06-01
 
 ### Fixed

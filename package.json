@@ -1,6 +1,6 @@
 {
   "name": "episodic-memory",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "description": "Semantic search for Claude Code and Codex conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -38,22 +38,21 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.142",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.159",
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.10.0",
-    "marked": "^18.0.3",
+    "marked": "^18.0.4",
     "sqlite-vec": "^0.1.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/marked": "^6.0.0",
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.1",
     "esbuild": "^0.28.0",
-    "tsx": "^4.22.0",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "repository": {
     "type": "git",
