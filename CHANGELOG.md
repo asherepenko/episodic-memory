@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.6] - 2026-05-31
+
+Merged the install, sync, and summarization robustness fixes from upstream `obra/episodic-memory` 1.4.1–1.4.2, adapted to this fork's TypeScript codebase and SQLite sync-state model.
+
+### Fixed
+- **Dependencies now install automatically on every entry point — no manual `npm install` is ever required.** If `/plugin install` didn't finish running `npm install` (or left `node_modules/` partial), running `episodic-memory sync`, `search`, or `index` used to crash with `Cannot find package '@anthropic-ai/claude-agent-sdk'`. Now all three entry points self-heal: the MCP server wrapper and any foreground CLI command install missing dependencies before doing anything else, and the SessionStart hook kicks off the install in the background so it lands automatically within one session without blocking startup. A file lock serializes them so concurrent triggers never run two `npm install` processes against the same `node_modules` (#95).
+- **Summaries work for conversations from other projects.** Short conversations whose recorded working directory differed from the one running sync used to fail silently and re-queue forever. The summarizer now routes the recorded directory to the Claude Agent SDK and falls back to a text-only summary when that directory no longer exists. Multi-project users were hit hardest (upstream #93, thanks @minyek).
+- **Codex summarization works again for ChatGPT-subscription accounts.** The summarizer no longer forwards a deprecated model id baked into old Codex history (e.g. `gpt-5.2-codex`), which Codex rejects with a 400 for subscription auth. It now uses the model from `~/.codex/config.toml`; set `EPISODIC_MEMORY_CODEX_MODEL` to override (upstream #99, thanks @monsterxz9).
+- **Empty conversations stop clogging the queue.** Metadata-only / zero-exchange files used to re-parse and re-queue on every sync; once ten piled up at the head of the queue, real conversations behind them stopped getting summarized. They're now marked done the first time they're seen (upstream #91, thanks @minyek).
+- **A failed summary on the `index` path is now retryable instead of permanent.** The indexer wrote no marker on failure, so a transient error (rate limit, network blip) meant that conversation re-attempted on every run forever. It now writes a structured error sentinel that retries after a threshold (default 1 hour, `EPISODIC_MEMORY_SUMMARY_ERROR_RETRY_HOURS`); `search`, `stats`, and `verify` all tell real summaries apart from error markers (upstream #96).
+- **Concurrent background syncs no longer collide.** When several Claude Code sessions fire SessionStart at once, a single-instance lock now serializes the workers; the rest print `sync already running (pid X); skipping` and exit cleanly, instead of racing the SQLite writes (upstream #97).
+- **`npm install` exits 0 on Windows.** The postinstall step moved off unix-only shell syntax (`2>/dev/null || true`) to a cross-platform Node script, so a clean install no longer reports a phantom failure on cmd.exe (upstream #95 follow-up).
+
+### Fork-specific adaptations
+- **#96 on the primary sync path was already covered** by this fork's per-conversation SQLite sync-state store (`poison`/`attempts`/`isRetriable`), which supersedes upstream's error-sentinel files. The error sentinel was applied only to the legacy file-based `index`/`stats`/`search`/`verify` paths, avoiding two competing mechanisms.
+- **The single-instance lock uses a built-in PID-liveness lock** (`src/file-lock.ts`), not upstream's `proper-lockfile` package — adding a required dependency would widen the very install surface the #95 work is shrinking.
+- **Self-heal was extended to every entry point** — the CLI shims and the SessionStart hook, not just the MCP server wrapper (upstream only healed via the wrapper). The original crash came in through the `episodic-memory` CLI, which the wrapper never covers. All installers share one lock-guarded routine (`installDepsSync` over `file-lock.ts`), and the hook path runs it detached (`scripts/ensure-deps.mjs`) to stay non-blocking.
+
+### Tests
+- 235 passing. Rewrote `test/hook-install-race.test.ts` for the new per-package dependency probe and foreground self-heal (background-race silence, partial-extraction tolerance, self-heal attempt, deps-present spawn).
+
 ## [1.4.5] - 2026-05-18
 
 ### Fixed

@@ -1,4 +1,19 @@
 import { ConversationExchange } from './types.js';
+/**
+ * Thrown by callClaude when the SDK yields an `is_error: true` result message.
+ * Carries the SDK's `subtype` and `session_id` as typed fields so callers can
+ * dispatch on structural metadata rather than parsing error message text (#93).
+ */
+export declare class SummarizerSdkError extends Error {
+    readonly subtype: string;
+    readonly sessionId?: string | undefined;
+    constructor(subtype: string, sessionId?: string | undefined);
+}
+/**
+ * True when the SDK's reported failure subtype indicates resume couldn't find
+ * the session — the trigger for the non-resume fallback in summarizeConversation.
+ */
+export declare function isResumeFailure(error: unknown): boolean;
 export declare class SummarizerTimeoutError extends Error {
     constructor(timeoutMs: number);
 }
@@ -28,6 +43,19 @@ export declare function buildCodexSummarizerCommand(args: {
     codexBin?: string;
 }): CodexSummarizerCommand;
 export declare function runCodexCommand(command: CodexSummarizerCommand): Promise<string>;
+/**
+ * Resolve the model to pass into Codex `thread/fork` for summarization.
+ *
+ * Historical exchanges may carry deprecated model ids (e.g. `gpt-5.2-codex`),
+ * and `-codex`-suffixed variants are API-key-only — ChatGPT-subscription users
+ * get a 400 from `app-server` regardless of the suffix used. Reading the model
+ * from history therefore breaks summarization for two large user populations.
+ *
+ * Default to `undefined` so `app-server` uses the current Codex config
+ * (`~/.codex/config.toml#model`). Operators can override via
+ * `EPISODIC_MEMORY_CODEX_MODEL` if they need a specific model id (#99, obra#98).
+ */
+export declare function getCodexModel(_exchanges: ConversationExchange[]): string | undefined;
 /**
  * Fast pre-filter: returns a trivial summary if the conversation has no
  * substantive user prose, otherwise null (caller should run full SDK summary).

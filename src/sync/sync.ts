@@ -239,7 +239,11 @@ export async function syncConversations(
         const exchanges = await parseConversation(filePath, project, filePath);
 
         if (exchanges.length === 0) {
-          return; // Skip empty conversations
+          // Zero-exchange / metadata-only file (#91). Mark the state terminal
+          // so it isn't re-parsed and re-queued on every sync run. If the file
+          // later grows, copyIfNewer → markStale re-opens it for summarization.
+          store.save(filePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
+          return;
         }
 
         // Only resume chunks if exchange count still matches; otherwise the

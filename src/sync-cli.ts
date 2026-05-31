@@ -7,7 +7,9 @@ import { generateExchangeEmbedding, initEmbeddings } from './embeddings.js';
 import { runMigrationBatch, countStale } from './embedding-migration.js';
 import { spawn } from 'child_process';
 import fs from 'fs';
+import path from 'path';
 import { formatLogLine, getSyncLogPath } from './logging.js';
+import { acquireFileLock, readLockHolder, releaseFileLock } from './file-lock.js';
 
 const args = process.argv.slice(2);
 
@@ -116,6 +118,31 @@ if (sourceDirs.length === 0) {
   }
   process.exit(0);
 }
+
+// Single-instance lock (#97). Independent SessionStart events from multiple
+// Claude Code sessions each fire `sync --background`; without a lock the
+// detached workers race the SQLite write path and pile up Claude subprocesses
+// for summarization. Acquire on the worker path — after the --background fork
+// has already returned and the source-dir check passed — and release on every
+// exit. Complements the reentrancy guard above (#87), which covers a different
+// cascade (summarizer-spawned syncs).
+const syncLockPath = path.join(path.dirname(getSyncLogPath()), 'episodic-memory-sync.lock');
+const syncLock = acquireFileLock(syncLockPath);
+if (!syncLock) {
+  const holder = readLockHolder(syncLockPath);
+  const holderLabel = holder !== null ? `pid ${holder}` : 'another process';
+  console.error(`episodic-memory: sync already running (${holderLabel}); skipping`);
+  process.exit(0);
+}
+const releaseSyncLockOnce = () => {
+  if ((releaseSyncLockOnce as any).done) return;
+  (releaseSyncLockOnce as any).done = true;
+  releaseFileLock(syncLock);
+};
+process.on('exit', releaseSyncLockOnce);
+process.on('SIGINT', () => { releaseSyncLockOnce(); process.exit(130); });
+process.on('SIGTERM', () => { releaseSyncLockOnce(); process.exit(143); });
+process.on('SIGHUP', () => { releaseSyncLockOnce(); process.exit(129); });
 
 console.log('Syncing conversations...');
 console.log(`Sources: ${sourceDirs.join(', ')}`);
