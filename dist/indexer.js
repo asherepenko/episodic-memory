@@ -125,6 +125,9 @@ export async function indexConversations(limitToProject, maxConversations, concu
                         try {
                             const summary = await summarizeConversation(conv.exchanges, sessionIdForSummary(conv.exchanges));
                             fs.writeFileSync(conv.summaryPath, summary, 'utf-8');
+                            // File written; mark Complete. If save throws after the write, the file
+                            // persists but state stays non-complete, so the next run re-summarizes
+                            // and overwrites — benign, not a corrupt state.
                             store.clearFailure(conv.archivePath);
                             store.save(conv.archivePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
                             const wordCount = summary.split(/\s+/).length;
@@ -173,6 +176,8 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
     const ARCHIVE_DIR = getArchiveDir();
     const excludedProjects = getExcludedProjects();
     const excludedDirSet = new Set(excludedProjects);
+    // Open the SyncState store once, mirroring indexConversations/indexUnprocessed.
+    const store = openConversationSyncStateStore();
     let found = false;
     for (const sourceDir of sourceDirs) {
         for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
@@ -203,12 +208,14 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
                     // Generate summary (unless --no-summaries). Queue decision and failure
                     // recording both flow through ConversationSyncState.
                     const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
-                    const store = openConversationSyncStateStore();
                     if (!noSummaries && shouldQueueForSummaryState(store.load(archivePath))) {
                         fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
                         try {
                             const summary = await summarizeConversation(exchanges, sessionIdForSummary(exchanges));
                             fs.writeFileSync(summaryPath, summary, 'utf-8');
+                            // File written; mark Complete. If save throws after the write, the file
+                            // persists but state stays non-complete, so the next run re-summarizes
+                            // and overwrites — benign, not a corrupt state.
                             store.clearFailure(archivePath);
                             store.save(archivePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
                             console.log(`Summary: ${summary.split(/\s+/).length} words`);
