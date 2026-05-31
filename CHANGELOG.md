@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.10] - 2026-06-01
+
+### Changed
+- **Internal architecture cleanup — no change to how the tool behaves, with one reliability win under the hood.** Three subsystems were untangled so each lives behind a small, single-purpose interface: the Codex summarization transport moved into its own module, the embedding pipeline (model, normalization, version, and the distance→similarity math) is now consolidated in one place so its core invariant can't drift across files, and the summary failure/retry lifecycle is now owned solely by the sync-state sidecar. That last change retires the old `-summary.txt` `__ERRORED__` file marker: a failed summary's retry state now lives in exactly one place instead of two that could disagree, which makes the "retry a failed summary later" path more dependable. Full test suite (247 tests) green; no user-facing commands, output, or on-disk summary format changed, and no re-indexing or re-embedding is triggered.
+
 ## [1.4.9] - 2026-06-01
 
 ### Changed
