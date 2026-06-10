@@ -11,9 +11,9 @@
  * process can, by rebuilding against the Node it's actually running under.
  *
  * This module detects that specific failure and rebuilds the binding in place,
- * once per process, serialized across processes with the same PID-aware lock
- * the embedding migration uses (the SessionStart hook can fan out several
- * processes that would otherwise rebuild concurrently).
+ * once per process, serialized across processes with the shared file lock from
+ * `./file-lock.js` (the SessionStart hook can fan out several processes that
+ * would otherwise rebuild concurrently).
  *
  * better-sqlite3 caches its addon in a module-scoped `DEFAULT_ADDON` only on a
  * successful load (lib/database.js), so a failed load leaves the slot empty and

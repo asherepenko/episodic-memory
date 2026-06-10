@@ -11,9 +11,9 @@
  * process can, by rebuilding against the Node it's actually running under.
  *
  * This module detects that specific failure and rebuilds the binding in place,
- * once per process, serialized across processes with the same PID-aware lock
- * the embedding migration uses (the SessionStart hook can fan out several
- * processes that would otherwise rebuild concurrently).
+ * once per process, serialized across processes with the shared file lock from
+ * `./file-lock.js` (the SessionStart hook can fan out several processes that
+ * would otherwise rebuild concurrently).
  *
  * better-sqlite3 caches its addon in a module-scoped `DEFAULT_ADDON` only on a
  * successful load (lib/database.js), so a failed load leaves the slot empty and
@@ -24,7 +24,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { createRequire } from 'module';
 import Database from 'better-sqlite3';
-import { acquireMigrationLock, releaseMigrationLock } from './embedding-migration.js';
+import { acquireFileLock, releaseFileLock } from './file-lock.js';
 const require = createRequire(import.meta.url);
 /** Rebuild at most once per process — a missing toolchain must not loop. */
 let healAttempted = false;
@@ -98,7 +98,7 @@ export function healNativeBinding() {
     if (!installRoot)
         return; // can't locate the package; let the caller surface it
     const lockPath = path.join(installRoot, '.episodic-native-rebuild.lock');
-    const lock = acquireMigrationLock(lockPath);
+    const lock = acquireFileLock(lockPath);
     if (!lock) {
         // Another process is rebuilding. Wait for it rather than piling on.
         // A from-source compile can take ~30–60s, so allow generous headroom.
@@ -117,6 +117,6 @@ export function healNativeBinding() {
         runRebuild(installRoot, ['--build-from-source']);
     }
     finally {
-        releaseMigrationLock(lock);
+        releaseFileLock(lock);
     }
 }

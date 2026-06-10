@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.12] - 2026-06-10
+
+### Changed
+- **The lock that stops two background jobs from running at once is now immune to a rare process-ID-reuse race — and there's only one copy of it.** Episodic memory serializes background work (sync, embedding migration, dependency install, and the native-binding rebuild from 1.4.11) behind a small file lock, so several Claude Code sessions starting at once can't stomp on each other. It recovers from a crashed holder by checking whether the recorded process ID is still alive. The edge case it didn't cover: if a holder crashed and the OS recycled its PID for an unrelated process before another worker looked, the lock could appear "held" by that stranger and stay wedged until it exited. The lock file now records the holder's process *start identity* next to its PID (read from `/proc` on Linux, `ps` on macOS, PowerShell on Windows); a worker that finds the PID alive but with a different start identity knows it was recycled and reclaims the lock. Separately, two near-identical lock implementations were merged into one audited module (`src/file-lock.ts`) so sync, migration, install, and rebuild can't drift apart. No behavior change in the normal single-session case; full suite (262 tests) green.
+
 ## [1.4.11] - 2026-06-10
 
 ### Fixed

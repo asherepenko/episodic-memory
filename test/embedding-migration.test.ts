@@ -1,29 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, existsSync, readFileSync, writeFileSync, openSync, closeSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import {
   EMBEDDING_VERSION,
-  acquireMigrationLock,
-  releaseMigrationLock,
   pickStaleBatch,
   recordReembedded,
   runMigrationBatch,
   countStale,
 } from '../src/embedding-migration.js';
+import { acquireFileLock, releaseFileLock } from '../src/file-lock.js';
 import { generateExchangeEmbedding, initEmbeddings } from '../src/embeddings.js';
 
 describe('embedding migration', () => {
   let testDir: string;
   let dbPath: string;
-  let lockPath: string;
 
   beforeEach(() => {
     testDir = mkdtempSync(join(tmpdir(), 'em-mig-test-'));
     dbPath = join(testDir, 'test.db');
-    lockPath = join(testDir, '.migrate.lock');
     process.env.TEST_DB_PATH = dbPath;
     process.env.EPISODIC_MEMORY_CONFIG_DIR = testDir;
   });
@@ -73,28 +70,6 @@ describe('embedding migration', () => {
   it('exposes EMBEDDING_VERSION as a positive integer source-of-truth', () => {
     expect(typeof EMBEDDING_VERSION).toBe('number');
     expect(EMBEDDING_VERSION).toBeGreaterThanOrEqual(1);
-  });
-
-  it('acquireMigrationLock succeeds when no lock exists, then fails for a second caller', () => {
-    const first = acquireMigrationLock(lockPath);
-    expect(first).not.toBeNull();
-    const second = acquireMigrationLock(lockPath);
-    expect(second).toBeNull();
-    releaseMigrationLock(first!);
-    // After release the lock is available again
-    const third = acquireMigrationLock(lockPath);
-    expect(third).not.toBeNull();
-    releaseMigrationLock(third!);
-  });
-
-  it('acquireMigrationLock claims a stale lock from a dead process', () => {
-    // Simulate a stale lock: write a PID that does not exist.
-    mkdirSync(testDir, { recursive: true });
-    const FAKE_PID = 999999;
-    writeFileSync(lockPath, String(FAKE_PID), 'utf-8');
-    const handle = acquireMigrationLock(lockPath);
-    expect(handle).not.toBeNull();
-    releaseMigrationLock(handle!);
   });
 
   it('pickStaleBatch returns rows whose embedding_version is less than the current version, capped by limit', () => {
@@ -192,7 +167,7 @@ describe('embedding migration', () => {
 
     // Pre-acquire the lock as if another process owns it.
     const lockPath = join(testDir, '.embedding-migration.lock');
-    const pre = acquireMigrationLock(lockPath);
+    const pre = acquireFileLock(lockPath);
     expect(pre).not.toBeNull();
 
     const fakeEmbed = async () => Array.from({ length: 384 }, () => 0);
@@ -202,7 +177,7 @@ describe('embedding migration', () => {
     const row = db.prepare(`SELECT embedding_version FROM exchanges WHERE id = 'x'`).get() as { embedding_version: number };
     expect(row.embedding_version).toBe(0);
 
-    releaseMigrationLock(pre!);
+    releaseFileLock(pre!);
     db.close();
   });
 

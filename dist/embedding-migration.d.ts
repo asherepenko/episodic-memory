@@ -20,19 +20,6 @@ import { EMBEDDING_VERSION } from './embeddings.js';
  * migration mechanics.
  */
 export { EMBEDDING_VERSION };
-export interface MigrationLockHandle {
-    path: string;
-    fd: number;
-}
-/**
- * Acquire an exclusive migration lock by writing our PID to the lock file.
- * Returns null if another live process holds the lock.
- *
- * Stale-lock recovery: if the lock file's PID is no longer alive, we steal it.
- * This avoids needing manual cleanup after crashes or kills.
- */
-export declare function acquireMigrationLock(lockPath: string): MigrationLockHandle | null;
-export declare function releaseMigrationLock(handle: MigrationLockHandle): void;
 export interface StaleRow {
     id: string;
     user_message: string;

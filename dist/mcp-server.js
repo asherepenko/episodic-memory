@@ -24780,25 +24780,97 @@ import { spawnSync } from "child_process";
 import { createRequire } from "module";
 import Database from "better-sqlite3";
 
-// src/embedding-migration.ts
+// src/file-lock.ts
 import fs2 from "fs";
 import path2 from "path";
-function acquireMigrationLock(lockPath) {
+import { execFileSync } from "child_process";
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function getProcessStartToken(pid) {
+  try {
+    if (process.platform === "linux") {
+      const stat = fs2.readFileSync(`/proc/${pid}/stat`, "utf-8");
+      const after = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+      return after[19] ?? null;
+    }
+    if (process.platform === "darwin") {
+      const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }).trim();
+      return out || null;
+    }
+    if (process.platform === "win32") {
+      const out = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`
+        ],
+        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+      return out || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+var selfTokenCache;
+function selfToken() {
+  if (selfTokenCache === void 0) selfTokenCache = getProcessStartToken(process.pid);
+  return selfTokenCache;
+}
+function writeLockRecord(fd) {
+  const record2 = { pid: process.pid, token: selfToken() };
+  fs2.writeSync(fd, JSON.stringify(record2));
+}
+function readLockRecord(lockPath) {
+  let raw;
+  try {
+    raw = fs2.readFileSync(lockPath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj.pid === "number" && obj.pid > 0) {
+      return { pid: obj.pid, token: typeof obj.token === "string" ? obj.token : null };
+    }
+    return null;
+  } catch {
+    const pid = parseInt(raw, 10);
+    return Number.isFinite(pid) && pid > 0 ? { pid, token: null } : null;
+  }
+}
+function holderStillValid(record2) {
+  if (!isProcessAlive(record2.pid)) return false;
+  if (record2.token !== null) {
+    const live = getProcessStartToken(record2.pid);
+    if (live !== null && live !== record2.token) return false;
+  }
+  return true;
+}
+function acquireFileLock(lockPath) {
   fs2.mkdirSync(path2.dirname(lockPath), { recursive: true });
   try {
     const fd = fs2.openSync(lockPath, "wx");
-    fs2.writeSync(fd, String(process.pid));
+    writeLockRecord(fd);
     return { path: lockPath, fd };
   } catch (err) {
     if (err.code !== "EEXIST") throw err;
   }
-  let holderPid;
-  try {
-    holderPid = parseInt(fs2.readFileSync(lockPath, "utf-8").trim(), 10);
-  } catch {
-    holderPid = NaN;
-  }
-  if (Number.isFinite(holderPid) && holderPid > 0 && isProcessAlive(holderPid)) {
+  const record2 = readLockRecord(lockPath);
+  if (record2 !== null && holderStillValid(record2)) {
     return null;
   }
   try {
@@ -24807,13 +24879,14 @@ function acquireMigrationLock(lockPath) {
   }
   try {
     const fd = fs2.openSync(lockPath, "wx");
-    fs2.writeSync(fd, String(process.pid));
+    writeLockRecord(fd);
     return { path: lockPath, fd };
-  } catch {
-    return null;
+  } catch (err) {
+    if (err.code === "EEXIST") return null;
+    throw err;
   }
 }
-function releaseMigrationLock(handle) {
+function releaseFileLock(handle) {
   try {
     fs2.closeSync(handle.fd);
   } catch {
@@ -24821,14 +24894,6 @@ function releaseMigrationLock(handle) {
   try {
     fs2.unlinkSync(handle.path);
   } catch {
-  }
-}
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
   }
 }
 
@@ -24885,7 +24950,7 @@ function healNativeBinding() {
   const installRoot = betterSqlite3InstallRoot();
   if (!installRoot) return;
   const lockPath = path3.join(installRoot, ".episodic-native-rebuild.lock");
-  const lock = acquireMigrationLock(lockPath);
+  const lock = acquireFileLock(lockPath);
   if (!lock) {
     console.error("episodic-memory: another process is rebuilding the native binding; waiting...");
     waitForBinding(12e4);
@@ -24900,7 +24965,7 @@ function healNativeBinding() {
     if (bindingUsable()) return;
     runRebuild(installRoot, ["--build-from-source"]);
   } finally {
-    releaseMigrationLock(lock);
+    releaseFileLock(lock);
   }
 }
 
@@ -27030,7 +27095,7 @@ ${result}
 }
 
 // src/version.ts
-var VERSION = "1.4.11";
+var VERSION = "1.4.12";
 
 // src/mcp-server.ts
 import fs5 from "fs";
