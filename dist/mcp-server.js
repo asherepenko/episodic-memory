@@ -3222,8 +3222,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path4) {
-      let input = path4;
+    function removeDotSegments(path6) {
+      let input = path6;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3422,8 +3422,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path4, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path4 && path4 !== "/" ? path4 : void 0;
+        const [path6, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path6 && path6 !== "/" ? path6 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6785,12 +6785,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs5, exportName) {
+    function addFormats(ajv, list, fs6, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs5[f]);
+        ajv.addFormat(f, fs6[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -7321,10 +7321,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path6) {
+  if (!path6)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path6.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -7733,11 +7733,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path6, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path6);
     return iss;
   });
 }
@@ -7884,16 +7884,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path4 = []) => {
+  const processError = (error52, path6 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path6, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -7920,17 +7920,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path4 = []) => {
+  const processError = (error52, path6 = []) => {
     var _a3, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path6, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -7962,8 +7962,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path4) {
+  const path6 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path6) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -20961,13 +20961,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path4 = ref.slice(1).split("/").filter(Boolean);
-  if (path4.length === 0) {
+  const path6 = ref.slice(1).split("/").filter(Boolean);
+  if (path6.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path4[0] === defsKey) {
-    const key = path4[1];
+  if (path6[0] === defsKey) {
+    const key = path6[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -24666,9 +24666,9 @@ var StdioServerTransport = class {
 };
 
 // src/db.ts
-import Database from "better-sqlite3";
-import path2 from "path";
-import fs2 from "fs";
+import Database2 from "better-sqlite3";
+import path4 from "path";
+import fs3 from "fs";
 import * as sqliteVec from "sqlite-vec";
 
 // src/paths.ts
@@ -24774,7 +24774,149 @@ var EMBEDDER = {
   distanceToSimilarity
 };
 
+// src/native-binding.ts
+import path3 from "path";
+import { spawnSync } from "child_process";
+import { createRequire } from "module";
+import Database from "better-sqlite3";
+
+// src/embedding-migration.ts
+import fs2 from "fs";
+import path2 from "path";
+function acquireMigrationLock(lockPath) {
+  fs2.mkdirSync(path2.dirname(lockPath), { recursive: true });
+  try {
+    const fd = fs2.openSync(lockPath, "wx");
+    fs2.writeSync(fd, String(process.pid));
+    return { path: lockPath, fd };
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+  }
+  let holderPid;
+  try {
+    holderPid = parseInt(fs2.readFileSync(lockPath, "utf-8").trim(), 10);
+  } catch {
+    holderPid = NaN;
+  }
+  if (Number.isFinite(holderPid) && holderPid > 0 && isProcessAlive(holderPid)) {
+    return null;
+  }
+  try {
+    fs2.unlinkSync(lockPath);
+  } catch {
+  }
+  try {
+    const fd = fs2.openSync(lockPath, "wx");
+    fs2.writeSync(fd, String(process.pid));
+    return { path: lockPath, fd };
+  } catch {
+    return null;
+  }
+}
+function releaseMigrationLock(handle) {
+  try {
+    fs2.closeSync(handle.fd);
+  } catch {
+  }
+  try {
+    fs2.unlinkSync(handle.path);
+  } catch {
+  }
+}
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+
+// src/native-binding.ts
+var require2 = createRequire(import.meta.url);
+var healAttempted = false;
+function isNativeBindingError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /could not locate the bindings file|was compiled against a different|NODE_MODULE_VERSION|ERR_DLOPEN|dlopen|invalid ELF header|not a valid Win32 application|better_sqlite3\.node/i.test(
+    msg
+  );
+}
+function bindingUsable() {
+  try {
+    const db = new Database(":memory:");
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+function betterSqlite3InstallRoot() {
+  try {
+    const pkgJson = require2.resolve("better-sqlite3/package.json");
+    const pkgDir = path3.dirname(pkgJson);
+    const nodeModules = path3.dirname(pkgDir);
+    return path3.dirname(nodeModules);
+  } catch {
+    return null;
+  }
+}
+function runRebuild(installRoot, extraArgs) {
+  const isWindows = process.platform === "win32";
+  const npmBin = isWindows ? "npm.cmd" : "npm";
+  spawnSync(npmBin, ["rebuild", "better-sqlite3", "--foreground-scripts", ...extraArgs], {
+    cwd: installRoot,
+    stdio: ["ignore", "inherit", "inherit"],
+    shell: isWindows
+  });
+}
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function waitForBinding(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (bindingUsable()) return;
+    sleepSync(500);
+  }
+}
+function healNativeBinding() {
+  if (healAttempted) return;
+  healAttempted = true;
+  const installRoot = betterSqlite3InstallRoot();
+  if (!installRoot) return;
+  const lockPath = path3.join(installRoot, ".episodic-native-rebuild.lock");
+  const lock = acquireMigrationLock(lockPath);
+  if (!lock) {
+    console.error("episodic-memory: another process is rebuilding the native binding; waiting...");
+    waitForBinding(12e4);
+    return;
+  }
+  try {
+    if (bindingUsable()) return;
+    console.error(
+      `episodic-memory: rebuilding better-sqlite3 for ${process.version} (Node was likely upgraded after install)...`
+    );
+    runRebuild(installRoot, []);
+    if (bindingUsable()) return;
+    runRebuild(installRoot, ["--build-from-source"]);
+  } finally {
+    releaseMigrationLock(lock);
+  }
+}
+
 // src/db.ts
+function openDatabase(dbPath, options) {
+  try {
+    return new Database2(dbPath, options);
+  } catch (err) {
+    if (!isNativeBindingError(err)) throw err;
+    console.error(
+      `episodic-memory: better-sqlite3 native binding failed to load (${err instanceof Error ? err.message.split("\n")[0] : String(err)}); attempting in-process rebuild...`
+    );
+    healNativeBinding();
+    return new Database2(dbPath, options);
+  }
+}
 function migrateSchema(db) {
   const columns = db.prepare(`SELECT name FROM pragma_table_info('exchanges')`).all();
   const columnNames = new Set(columns.map((c) => c.name));
@@ -24851,11 +24993,11 @@ function migrateToolCallsCascade(db) {
 }
 function initDatabase() {
   const dbPath = getDbPath();
-  const dbDir = path2.dirname(dbPath);
-  if (!fs2.existsSync(dbDir)) {
-    fs2.mkdirSync(dbDir, { recursive: true });
+  const dbDir = path4.dirname(dbPath);
+  if (!fs3.existsSync(dbDir)) {
+    fs3.mkdirSync(dbDir, { recursive: true });
   }
-  const db = new Database(dbPath);
+  const db = openDatabase(dbPath);
   sqliteVec.load(db);
   db.pragma("journal_mode = WAL");
   db.exec(`
@@ -24933,7 +25075,7 @@ function initDatabase() {
 }
 
 // src/search.ts
-import fs3 from "fs";
+import fs4 from "fs";
 import readline from "readline";
 function buildSearchFilters(options) {
   const parts = [];
@@ -25084,8 +25226,8 @@ async function searchConversations(query, options = {}) {
     const exchange = exchangeFromRow(row);
     const summaryPath = row.archive_path.replace(".jsonl", "-summary.txt");
     let summary;
-    if (fs3.existsSync(summaryPath)) {
-      summary = fs3.readFileSync(summaryPath, "utf-8").trim();
+    if (fs4.existsSync(summaryPath)) {
+      summary = fs4.readFileSync(summaryPath, "utf-8").trim();
     }
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
@@ -25099,7 +25241,7 @@ async function searchConversations(query, options = {}) {
 }
 async function countLines(filePath) {
   try {
-    const fileStream = fs3.createReadStream(filePath);
+    const fileStream = fs4.createReadStream(filePath);
     const rl = readline.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -25115,7 +25257,7 @@ async function countLines(filePath) {
 }
 function getFileSizeInKB(filePath) {
   try {
-    const stats = fs3.lstatSync(filePath);
+    const stats = fs4.lstatSync(filePath);
     return Math.round(stats.size / 1024 * 10) / 10;
   } catch (error51) {
     return 0;
@@ -26888,11 +27030,11 @@ ${result}
 }
 
 // src/version.ts
-var VERSION = "1.4.10";
+var VERSION = "1.4.11";
 
 // src/mcp-server.ts
-import fs4 from "fs";
-import path3 from "path";
+import fs5 from "fs";
+import path5 from "path";
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
@@ -27065,15 +27207,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     if (name === "read") {
       const params = ShowConversationInputSchema.parse(args);
-      const archiveDir = path3.resolve(getArchiveDir());
-      const resolvedPath = path3.resolve(params.path);
-      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path3.sep)) {
+      const archiveDir = path5.resolve(getArchiveDir());
+      const resolvedPath = path5.resolve(params.path);
+      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path5.sep)) {
         throw new Error(`Access denied: path is outside the archive directory`);
       }
-      if (!fs4.existsSync(resolvedPath)) {
+      if (!fs5.existsSync(resolvedPath)) {
         throw new Error(`File not found: ${params.path}`);
       }
-      const jsonlContent = fs4.readFileSync(resolvedPath, "utf-8");
+      const jsonlContent = fs5.readFileSync(resolvedPath, "utf-8");
       const markdownContent = formatConversationAsMarkdown(
         jsonlContent,
         params.startLine,

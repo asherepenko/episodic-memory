@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.11] - 2026-06-10
+
+### Fixed
+- **Episodic memory now repairs itself after a Node.js upgrade instead of silently going dead.** The plugin's database engine (`better-sqlite3`) is a native binary compiled for one specific Node.js version. Upgrade Node — especially to a brand-new release like Node 26 — and that binary no longer matches, so every sync, search, and MCP call fails with `Could not locate the bindings file`. The trap: the background sync runs from a session-start hook with no visible error, so episodic memory just quietly stops recording and answering while its index drifts out of date — exactly the "why isn't this running anymore?" symptom. Now, the first time the plugin opens its database after such a break, it detects the mismatch and rebuilds the binary in place against your current Node — automatically, at most once per process, and serialized with a lock so several sessions starting at once can't rebuild on top of each other. In testing, a fully broken install recovered and returned real results (13,632 indexed exchanges) within seconds of the next command.
+
+### Changed
+- **The installer no longer reports success when the database engine failed to build.** The postinstall step used to run one rebuild and trust its exit code — so on a Node version with no matching prebuilt binary, it could finish "successfully" while leaving zero usable binaries behind, producing an install that looked fine but crashed on first use (this is what left recent installs broken on Node 26). It now verifies the binary actually loads — by opening a throwaway in-memory database — before considering itself done, and if the first rebuild doesn't produce a working binary it forces a from-source compile as a fallback. Building from source needs a C/C++ toolchain (Xcode Command Line Tools on macOS, `build-essential` + `python3` on Linux, Visual Studio Build Tools on Windows); on real failure the installer now prints clear, OS-specific recovery steps. It still never fails `npm install` over this, so a missing toolchain doesn't block the rest of the install.
+
 ## [1.4.10] - 2026-06-01
 
 ### Changed

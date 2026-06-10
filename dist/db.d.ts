@@ -1,5 +1,13 @@
 import Database from 'better-sqlite3';
 import { ConversationExchange } from './types.js';
+/**
+ * Open the SQLite database, self-healing the better-sqlite3 native binding if
+ * it fails to load. A Node upgrade after install changes the ABI and breaks the
+ * compiled `.node` (postinstall can't catch this — it only runs at install).
+ * On a binding error we rebuild in place and retry once; anything else, or a
+ * still-broken binding after the rebuild, propagates with the real error.
+ */
+export declare function openDatabase(dbPath: string, options?: Database.Options): Database.Database;
 export declare function migrateSchema(db: Database.Database): void;
 /**
  * Earlier versions created `tool_calls` with a plain

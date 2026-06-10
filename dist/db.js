@@ -4,6 +4,28 @@ import fs from 'fs';
 import * as sqliteVec from 'sqlite-vec';
 import { getDbPath } from './paths.js';
 import { EMBEDDING_VERSION } from './embeddings.js';
+import { isNativeBindingError, healNativeBinding } from './native-binding.js';
+/**
+ * Open the SQLite database, self-healing the better-sqlite3 native binding if
+ * it fails to load. A Node upgrade after install changes the ABI and breaks the
+ * compiled `.node` (postinstall can't catch this — it only runs at install).
+ * On a binding error we rebuild in place and retry once; anything else, or a
+ * still-broken binding after the rebuild, propagates with the real error.
+ */
+export function openDatabase(dbPath, options) {
+    try {
+        return new Database(dbPath, options);
+    }
+    catch (err) {
+        if (!isNativeBindingError(err))
+            throw err;
+        console.error('episodic-memory: better-sqlite3 native binding failed to load ' +
+            `(${err instanceof Error ? err.message.split('\n')[0] : String(err)}); ` +
+            'attempting in-process rebuild...');
+        healNativeBinding();
+        return new Database(dbPath, options);
+    }
+}
 export function migrateSchema(db) {
     const columns = db.prepare(`SELECT name FROM pragma_table_info('exchanges')`).all();
     const columnNames = new Set(columns.map(c => c.name));
@@ -97,7 +119,7 @@ export function initDatabase() {
     if (!fs.existsSync(dbDir)) {
         fs.mkdirSync(dbDir, { recursive: true });
     }
-    const db = new Database(dbPath);
+    const db = openDatabase(dbPath);
     // Load sqlite-vec extension
     sqliteVec.load(db);
     // Enable WAL mode for better concurrency

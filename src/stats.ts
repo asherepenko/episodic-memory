@@ -1,5 +1,5 @@
-import Database from 'better-sqlite3';
 import { getDbPath } from './paths.js';
+import { openDatabase } from './db.js';
 
 export interface IndexStats {
   totalConversations: number;
@@ -30,7 +30,7 @@ export async function getIndexStats(dbPath?: string): Promise<IndexStats> {
     };
   }
 
-  const db = new Database(resolvedDbPath, { readonly: true });
+  const db = openDatabase(resolvedDbPath, { readonly: true });
 
   try {
     // Check if tables exist

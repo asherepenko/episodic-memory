@@ -101,7 +101,8 @@ test/
 ### Distribution & Installation
 - `dist/` is committed; pre-built for plugin install without dev deps
 - `node_modules/` NOT committed; `package-lock.json` NOT committed (native deps platform-specific)
-- Build on install via `postinstall` hook: `npm rebuild better-sqlite3`
+- Build on install via `postinstall` hook (`scripts/postinstall.js`): it *verifies* the better-sqlite3 native binding actually loads (opens an in-memory DB), and only rebuilds if it doesn't — falling back to `--build-from-source` when no prebuilt binary covers the local Node ABI. Always exits 0 so a build failure never bricks `npm install`; loud stderr on real failure.
+- **Native-binding gotcha (Node ABI):** the postinstall only runs at install time. A Node upgrade *after* install changes the ABI and breaks the binding with `Could not locate the bindings file` — sync and MCP crash silently while the SessionStart hook still fires. Recover with `cd <plugin-dir> && npm rebuild better-sqlite3` (or reinstall the plugin). A bleeding-edge Node (e.g. 26 / ABI 147) needs a from-source compile because no prebuilt binary exists yet, so a C/C++ toolchain must be present.
 
 ### MCP Server Quirks
 - Embedding output sent to stderr, not stdout (prevents protocol corruption)
