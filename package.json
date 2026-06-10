@@ -1,6 +1,6 @@
 {
   "name": "episodic-memory",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "description": "Semantic search for Claude Code and Codex conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -58,5 +58,13 @@
     "type": "git",
     "url": "https://github.com/asherepenko/episodic-memory"
   },
-  "homepage": "https://github.com/asherepenko/episodic-memory"
+  "homepage": "https://github.com/asherepenko/episodic-memory",
+  "allowScripts": {
+    "better-sqlite3": true,
+    "esbuild": true,
+    "fsevents": true,
+    "onnxruntime-node": true,
+    "sharp": true,
+    "protobufjs": true
+  }
 }

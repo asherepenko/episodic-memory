@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.13] - 2026-06-10
+
+### Changed
+- **Pre-authorized the native dependencies' install scripts, so `npm install` stays quiet today and keeps building correctly tomorrow.** npm 11 added an `allowScripts` allowlist in `package.json` that records which dependencies may run install/postinstall scripts. It's advisory for now — the scripts still run, but every `npm install` prints a warning naming the six packages that build native binaries (`better-sqlite3`, `onnxruntime-node`, `esbuild`, `sharp`, `protobufjs`, `fsevents`). The package now declares all six as approved: that silences the warning and, more importantly, future-proofs the install — when npm flips the allowlist from advisory to enforcing, these native builds keep running instead of being silently skipped (a skipped `better-sqlite3` build is exactly what leaves the database engine with no binary). The entries are version-agnostic, so a routine dependency patch bump won't re-trigger the warning. This affects the `npm install` path only; the Claude Code `/plugin install` path still skips dependency scripts, so the 1.4.11 runtime self-heal remains the safety net there.
+
 ## [1.4.12] - 2026-06-10
 
 ### Changed
