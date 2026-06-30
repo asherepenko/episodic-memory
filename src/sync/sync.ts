@@ -27,7 +27,7 @@ function shouldSkipConversation(filePath: string): boolean {
     fd = fs.openSync(filePath, 'r');
     const buf = Buffer.alloc(MARKER_SCAN_BYTES);
     const bytesRead = fs.readSync(fd, buf, 0, MARKER_SCAN_BYTES, 0);
-    const head = buf.slice(0, bytesRead).toString('utf-8');
+    const head = buf.subarray(0, bytesRead).toString('utf-8');
     return EXCLUSION_MARKERS.some(marker => head.includes(marker));
   } catch {
     return false;
