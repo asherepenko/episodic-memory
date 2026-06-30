@@ -82,6 +82,27 @@ describe('verifyIndex', () => {
     expect(result.missing[0].reason).toBe('No summary file');
   });
 
+  it('does not flag conversations with no exchanges as missing summaries', async () => {
+    // A session that produced no user/assistant exchanges (empty or aborted).
+    // It has no summary file and never will — must not be reported as missing.
+    const projectArchive = path.join(archiveDir, 'empty-project');
+    fs.mkdirSync(projectArchive, { recursive: true });
+
+    const conversationPath = path.join(projectArchive, 'empty-conversation.jsonl');
+
+    // Records that yield zero exchanges (no user→assistant pairing).
+    const messages = [
+      JSON.stringify({ type: 'summary', summary: 'meta', timestamp: '2024-01-01T00:00:00Z' }),
+      JSON.stringify({ type: 'system', content: 'session start', timestamp: '2024-01-01T00:00:01Z' })
+    ];
+    fs.writeFileSync(conversationPath, messages.join('\n'));
+
+    const result = await verifyIndex();
+
+    expect(result.missing.length).toBe(0);
+    expect(result.corrupted.length).toBe(0);
+  });
+
   it('detects orphaned database entries', async () => {
     // Initialize database
     const db = initDatabase();

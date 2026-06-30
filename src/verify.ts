@@ -60,6 +60,27 @@ export async function verifyIndex(): Promise<VerificationResult> {
 
       const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
 
+      // Parse first: this both detects corruption and lets us count exchanges
+      // before deciding the conversation is "missing" a summary.
+      let exchanges;
+      try {
+        exchanges = await parseConversation(conversationPath, project, conversationPath);
+      } catch (error) {
+        result.corrupted.push({
+          path: conversationPath,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
+
+      // Conversations with no exchanges (empty/aborted sessions) have nothing
+      // to summarize or index. They never get a summary file, so flagging them
+      // as "missing" loops forever — repair re-parses, finds 0 exchanges, skips,
+      // and the next verify flags them again. Treat them as nothing to do.
+      if (exchanges.length === 0) {
+        continue;
+      }
+
       // A missing summary file means the conversation hasn't been summarized
       // yet. Error/retry state lives in ConversationSyncState (Poison), not in
       // the file; here we only care whether the derived summary exists.
@@ -79,16 +100,6 @@ export async function verifyIndex(): Promise<VerificationResult> {
             dbTime: lastIndexed
           });
         }
-      }
-
-      // Try parsing to detect corruption
-      try {
-        await parseConversation(conversationPath, project, conversationPath);
-      } catch (error) {
-        result.corrupted.push({
-          path: conversationPath,
-          error: error instanceof Error ? error.message : String(error)
-        });
       }
     }
   }

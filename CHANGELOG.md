@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-07-01
+
+### Fixed
+- **`verify` stops nagging about empty conversations.** Sessions that ended with no actual back-and-forth (aborted or empty transcripts) have nothing to summarize, so they never get a summary file. `episodic-memory verify` used to count them as "missing summaries" and try to re-index them on every run — printing an endless "Skipped (no exchanges)" — without ever clearing the warning. Verify now recognizes empty conversations and quietly ignores them, so the missing-summaries count reflects real work left to do.
+
 ## [1.5.0] - 2026-06-30
 
 ### Added
