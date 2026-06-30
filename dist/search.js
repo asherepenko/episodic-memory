@@ -106,6 +106,30 @@ function validateISODate(dateStr, paramName) {
         throw new Error(`Invalid ${paramName} date: "${dateStr}". Not a valid calendar date.`);
     }
 }
+/**
+ * Reciprocal Rank Fusion over several ranked row lists (each row has an `id`).
+ * A row's fused score is the sum of 1/(k + rank) across the lists it appears
+ * in (rank is 1-based), so something ranked highly by *both* vector and text
+ * search beats something only one list liked. `k` (default 60, the standard
+ * RRF constant) damps the weight of deep ranks. Lists are passed
+ * highest-authority first; the first list to contain a row supplies the row
+ * object that survives (vector rows carry a real distance for display).
+ */
+export function reciprocalRankFusion(lists, limit, k = 60) {
+    const scores = new Map();
+    const rowById = new Map();
+    for (const list of lists) {
+        list.forEach((row, idx) => {
+            scores.set(row.id, (scores.get(row.id) ?? 0) + 1 / (k + idx + 1));
+            if (!rowById.has(row.id))
+                rowById.set(row.id, row);
+        });
+    }
+    return [...scores.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, limit)
+        .map(([id]) => rowById.get(id));
+}
 export async function searchConversations(query, options = {}) {
     const { limit = 10, mode = 'both', after, before } = options;
     // Validate date parameters
@@ -136,7 +160,9 @@ export async function searchConversations(query, options = {}) {
       ORDER BY vec.distance ASC
     `);
         results = stmt.all(Buffer.from(new Float32Array(queryEmbedding).buffer), k, ...filterParams);
-        if (results.length > limit) {
+        // In 'both' mode keep the full candidate list for rank fusion below; only
+        // trim to `limit` for vector-only mode.
+        if (mode === 'vector' && results.length > limit) {
             results = results.slice(0, limit);
         }
     }
@@ -155,13 +181,9 @@ export async function searchConversations(query, options = {}) {
     `);
         const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, limit);
         if (mode === 'both') {
-            // Merge and deduplicate by ID
-            const seenIds = new Set(results.map(r => r.id));
-            for (const textResult of textResults) {
-                if (!seenIds.has(textResult.id)) {
-                    results.push(textResult);
-                }
-            }
+            // Fuse the vector and text rankings (vector first = higher authority on
+            // ties) instead of just appending text matches after every vector hit.
+            results = reciprocalRankFusion([results, textResults], limit);
         }
         else {
             results = textResults;

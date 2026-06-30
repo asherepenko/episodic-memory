@@ -25529,6 +25529,17 @@ function validateISODate(dateStr, paramName) {
     throw new Error(`Invalid ${paramName} date: "${dateStr}". Not a valid calendar date.`);
   }
 }
+function reciprocalRankFusion(lists, limit, k = 60) {
+  const scores = /* @__PURE__ */ new Map();
+  const rowById = /* @__PURE__ */ new Map();
+  for (const list of lists) {
+    list.forEach((row, idx) => {
+      scores.set(row.id, (scores.get(row.id) ?? 0) + 1 / (k + idx + 1));
+      if (!rowById.has(row.id)) rowById.set(row.id, row);
+    });
+  }
+  return [...scores.entries()].sort((a, b2) => b2[1] - a[1]).slice(0, limit).map(([id]) => rowById.get(id));
+}
 async function searchConversations(query, options = {}) {
   const { limit = 10, mode = "both", after, before } = options;
   if (after) validateISODate(after, "--after");
@@ -25557,7 +25568,7 @@ async function searchConversations(query, options = {}) {
       k,
       ...filterParams
     );
-    if (results.length > limit) {
+    if (mode === "vector" && results.length > limit) {
       results = results.slice(0, limit);
     }
   }
@@ -25575,12 +25586,10 @@ async function searchConversations(query, options = {}) {
     `);
     const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, limit);
     if (mode === "both") {
-      const seenIds = new Set(results.map((r) => r.id));
-      for (const textResult of textResults) {
-        if (!seenIds.has(textResult.id)) {
-          results.push(textResult);
-        }
-      }
+      results = reciprocalRankFusion(
+        [results, textResults],
+        limit
+      );
     } else {
       results = textResults;
     }

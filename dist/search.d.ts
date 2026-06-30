@@ -18,6 +18,18 @@ export interface SearchOptions {
  * historical export name for callers and tests.
  */
 export declare function l2DistanceToCosineSimilarity(distance: number): number;
+/**
+ * Reciprocal Rank Fusion over several ranked row lists (each row has an `id`).
+ * A row's fused score is the sum of 1/(k + rank) across the lists it appears
+ * in (rank is 1-based), so something ranked highly by *both* vector and text
+ * search beats something only one list liked. `k` (default 60, the standard
+ * RRF constant) damps the weight of deep ranks. Lists are passed
+ * highest-authority first; the first list to contain a row supplies the row
+ * object that survives (vector rows carry a real distance for display).
+ */
+export declare function reciprocalRankFusion<T extends {
+    id: string;
+}>(lists: T[][], limit: number, k?: number): T[];
 export declare function searchConversations(query: string, options?: SearchOptions): Promise<SearchResult[]>;
 /**
  * When a search returns nothing, distinguish "index still building" from a
