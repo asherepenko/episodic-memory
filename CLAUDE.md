@@ -189,6 +189,7 @@ interface ConversationExchange {
 - `EPISODIC_MEMORY_DB_PATH` — Override default DB path (testing)
 - `EPISODIC_MEMORY_API_BASE_URL` — Anthropic API base (for summaries)
 - `EPISODIC_MEMORY_API_MODEL` — Model for summaries (e.g., claude-opus-4-1)
+- `EPISODIC_MEMORY_CONCURRENCY` — Parallel summary workers per sync (default: 2). The `sync --concurrency`/`-c` flag (1–16) overrides it. The SessionStart hook runs a bare `sync --background` and *inherits* this from the session env — it never sets it — so export it in the session environment to tune the background hook; use the flag for a one-off manual catch-up.
 - `EPISODIC_MEMORY_SUMMARIZER_GUARD` — Set to `1` by `getApiEnv()` to break recursive Claude SDK spawn loops; sync-cli silently exits when seen
 - `ANTHROPIC_API_KEY` — For API calls
 - `TEST_DB_PATH`, `TEST_ARCHIVE_DIR`, `TEST_PROJECTS_DIR` — Test overrides

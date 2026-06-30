@@ -158,6 +158,7 @@ episodic-memory search --text "exact phrase"
 episodic-memory search --after 2025-09-01 "refactoring"
 episodic-memory search --project my-app "auth flow"
 episodic-memory search --git-branch feature/login "validation"
+episodic-memory search --min-score 0.7 "auth flow"   # drop weak semantic matches
 
 # Multi-concept AND search (positional args)
 episodic-memory search "React Router" "authentication" "JWT"
@@ -212,9 +213,14 @@ export EPISODIC_MEMORY_API_TIMEOUT_MS=3000000
 
 # Override Codex binary path if needed (default: codex)
 export EPISODIC_MEMORY_CODEX_BIN=/path/to/codex
+
+# Parallel summary workers per sync (default: 2)
+export EPISODIC_MEMORY_CONCURRENCY=8
 ```
 
 These settings only affect episodic-memory's summarization calls, not your interactive Claude Code or Codex sessions.
+
+**Tuning the background hook:** the SessionStart hook runs a bare `sync --background` and inherits the session's environment, so it does not set a concurrency of its own (it defaults to `2`). To make the background sync summarize faster on a large backlog, export `EPISODIC_MEMORY_CONCURRENCY` in the environment your Claude Code / Codex session inherits — the hook will pick it up. Raise it cautiously: higher concurrency means more simultaneous summarizer API calls and more rate-limit pressure. For a one-off manual catch-up, prefer the `--concurrency` flag (below) instead of changing the environment.
 
 Codex summarization requires `codex-cli 0.130.0` or newer. If Codex app-server summarization is unavailable, sync logs the reason and falls back to transcript-text summarization.
 
@@ -243,6 +249,7 @@ Features:
 **Options:**
 - `--background` — fork and return immediately (use in hooks)
 - `--limit <n>` — max summaries to generate per run (default: `10`)
+- `--concurrency <n>` / `-c <n>` — parallel summary workers, `1`–`16` (overrides `EPISODIC_MEMORY_CONCURRENCY`; default `2`)
 
 **Examples:**
 ```bash
@@ -251,6 +258,9 @@ episodic-memory sync
 
 # Generate more summaries in one pass
 episodic-memory sync --limit 50
+
+# Catch up a backlog faster with 8 parallel summary workers
+episodic-memory sync --limit 100 --concurrency 8
 
 # Background mode for hooks
 episodic-memory sync --background
@@ -269,6 +279,16 @@ Display index statistics including conversation counts, date ranges, and project
 
 ```bash
 episodic-memory stats
+```
+
+Stats also flags exchanges still on an old embedding model and conversations permanently skipped after repeated summary failures (retry those with `EPISODIC_MEMORY_RETRY_ALL=1 episodic-memory sync`).
+
+### `episodic-memory status`
+
+At-a-glance health check. Reports whether the native SQLite binding loaded, whether the index database exists, conversation/summary/exchange counts, the last sync time, stale-embedding count, and permanently-skipped (poison) conversations. Exits non-zero when the core engine is unhealthy (binding missing or database not yet created) — handy in scripts.
+
+```bash
+episodic-memory status
 ```
 
 ### `episodic-memory doctor`
