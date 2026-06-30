@@ -26,6 +26,45 @@ export function shouldQueueForSummaryState(state: SyncState): boolean {
   return isRetriable(state);
 }
 
+export interface IndexScope {
+  projects: number;
+  conversations: number;
+}
+
+/**
+ * Cheap up-front scan of the work an index run faces: how many projects and
+ * conversation files are in scope. Pure directory listing — no parsing, no DB —
+ * so it can be reported before the slow archive/parse/summarize phase begins.
+ * Mirrors the indexer's own walk: skips non-directories, excluded projects, and
+ * projects with no .jsonl files; honors an optional single-project limit.
+ */
+export function scanIndexScope(
+  sourceDirs: string[],
+  excludedDirSet: Set<string>,
+  limitToProject?: string,
+): IndexScope {
+  let projects = 0;
+  let conversations = 0;
+  for (const sourceDir of sourceDirs) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (excludedDirSet.has(entry.name)) continue;
+      if (limitToProject && entry.name !== limitToProject) continue;
+      const files = findJsonlFiles(path.join(sourceDir, entry.name), excludedDirSet);
+      if (files.length === 0) continue;
+      projects++;
+      conversations += files.length;
+    }
+  }
+  return { projects, conversations };
+}
+
 // Set max output tokens for Claude SDK (used by summarizer)
 process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '20000';
 
@@ -93,6 +132,14 @@ export async function indexConversations(
 
   const excludedProjects = getExcludedProjects();
   const excludedDirSet = new Set(excludedProjects);
+
+  // Up-front summary of the work ahead, before the slow parse/summarize phase.
+  const scope = scanIndexScope(sourceDirs, excludedDirSet, limitToProject);
+  if (scope.conversations === 0) {
+    console.log('No conversations found to index.');
+  } else {
+    console.log(`To index: ${scope.conversations} conversation(s) across ${scope.projects} project(s).`);
+  }
 
   for (const sourceDir of sourceDirs) {
   for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
