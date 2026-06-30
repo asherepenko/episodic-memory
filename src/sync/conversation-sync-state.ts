@@ -274,6 +274,61 @@ export function isRetriable(state: SyncState): boolean {
   return state.kind !== 'poison' || state.attempts < MAX_ATTEMPTS;
 }
 
+export interface SyncStateCounts {
+  total: number;
+  complete: number;
+  pending: number;
+  inProgress: number;
+  stale: number;
+  /** attempts >= MAX_ATTEMPTS — permanently skipped until EPISODIC_MEMORY_RETRY_ALL */
+  poison: number;
+  /** failed but still under the retry threshold */
+  poisonRetriable: number;
+  /** most recent successful-activity timestamp across sidecars */
+  newestLastUpdated?: string;
+}
+
+/**
+ * Tally every `.sync.json` sidecar under the archive by kind. Used by the
+ * `status`/`stats` surfaces to report permanently-skipped (poison) conversations
+ * and overall summary progress without opening the DB. Reads sidecars directly
+ * (not via the store's load(), which would apply RETRY_ALL masking and legacy
+ * migration); corrupt or wrong-version sidecars are skipped silently.
+ */
+export function countSyncStates(opts?: { archiveDir?: string }): SyncStateCounts {
+  const archiveDir = opts?.archiveDir ?? getArchiveDir();
+  const counts: SyncStateCounts = {
+    total: 0, complete: 0, pending: 0, inProgress: 0, stale: 0, poison: 0, poisonRetriable: 0,
+  };
+  const sidecars: string[] = [];
+  walkSidecars(archiveDir, sidecars);
+  for (const file of sidecars) {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || parsed.version !== SCHEMA_VERSION) continue;
+    counts.total++;
+    switch (parsed.kind) {
+      case 'complete': counts.complete++; break;
+      case 'pending': counts.pending++; break;
+      case 'inProgress': counts.inProgress++; break;
+      case 'stale': counts.stale++; break;
+      case 'poison':
+        if (typeof parsed.attempts === 'number' && parsed.attempts >= MAX_ATTEMPTS) counts.poison++;
+        else counts.poisonRetriable++;
+        break;
+    }
+    if (typeof parsed.lastUpdated === 'string' &&
+        (!counts.newestLastUpdated || parsed.lastUpdated > counts.newestLastUpdated)) {
+      counts.newestLastUpdated = parsed.lastUpdated;
+    }
+  }
+  return counts;
+}
+
 function walkSidecars(dir: string, out: string[]): void {
   let entries: fs.Dirent[];
   try {

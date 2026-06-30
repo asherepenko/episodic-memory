@@ -37,6 +37,7 @@ COMMANDS:
   search      Search indexed conversations
   show        Display a conversation in readable format
   stats       Show index statistics
+  status      At-a-glance health check (engine, index, sync, summaries)
   doctor      Diagnose Claude Code or Codex integration issues
 
 Run 'episodic-memory <command> --help' for command-specific help.
@@ -70,6 +71,9 @@ async function main() {
                 break;
             case 'stats':
                 await runScript(join(distDir, 'stats-cli.js'), args);
+                break;
+            case 'status':
+                await runScript(join(distDir, 'status-cli.js'), args);
                 break;
             case 'doctor':
                 await runScript(join(distDir, 'doctor-cli.js'), args);

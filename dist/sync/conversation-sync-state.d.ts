@@ -43,6 +43,29 @@ export interface ConversationSyncStateStore {
 }
 export declare function sidecarPathFor(jsonlPath: string): string;
 export declare function isRetriable(state: SyncState): boolean;
+export interface SyncStateCounts {
+    total: number;
+    complete: number;
+    pending: number;
+    inProgress: number;
+    stale: number;
+    /** attempts >= MAX_ATTEMPTS — permanently skipped until EPISODIC_MEMORY_RETRY_ALL */
+    poison: number;
+    /** failed but still under the retry threshold */
+    poisonRetriable: number;
+    /** most recent successful-activity timestamp across sidecars */
+    newestLastUpdated?: string;
+}
+/**
+ * Tally every `.sync.json` sidecar under the archive by kind. Used by the
+ * `status`/`stats` surfaces to report permanently-skipped (poison) conversations
+ * and overall summary progress without opening the DB. Reads sidecars directly
+ * (not via the store's load(), which would apply RETRY_ALL masking and legacy
+ * migration); corrupt or wrong-version sidecars are skipped silently.
+ */
+export declare function countSyncStates(opts?: {
+    archiveDir?: string;
+}): SyncStateCounts;
 export declare function openConversationSyncStateStore(opts?: {
     archiveDir?: string;
 }): ConversationSyncStateStore;
