@@ -1,4 +1,4 @@
-export { syncConversations } from './sync.js';
+export { syncConversations, resolveSummaryConcurrency } from './sync.js';
 export type { SyncResult, SyncOptions } from './sync.js';
 export {
   openConversationSyncStateStore,

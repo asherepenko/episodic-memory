@@ -34,6 +34,19 @@ function shouldSkipConversation(filePath) {
         }
     }
 }
+/**
+ * Resolve the parallel-summary-worker count.
+ * Precedence: explicit option (the `--concurrency` flag) > EPISODIC_MEMORY_CONCURRENCY env > default 2.
+ * Non-positive or non-numeric inputs fall through to the next source.
+ */
+export function resolveSummaryConcurrency(optionConcurrency, envValue) {
+    if (optionConcurrency !== undefined && optionConcurrency > 0)
+        return optionConcurrency;
+    const env = parseInt(envValue ?? '', 10);
+    if (Number.isFinite(env) && env > 0)
+        return env;
+    return 2;
+}
 function copyIfNewer(src, dest) {
     // Ensure destination directory exists
     const destDir = path.dirname(dest);
@@ -177,8 +190,7 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
         const summaryLimit = options.summaryLimit ?? 10;
         const toSummarize = eligible.slice(0, summaryLimit);
         const remaining = eligible.length - toSummarize.length;
-        const concurrencyRaw = parseInt(process.env.EPISODIC_MEMORY_CONCURRENCY ?? '', 10);
-        const concurrency = Number.isFinite(concurrencyRaw) && concurrencyRaw > 0 ? concurrencyRaw : 2;
+        const concurrency = resolveSummaryConcurrency(options.concurrency, process.env.EPISODIC_MEMORY_CONCURRENCY);
         log.info(`Generating summaries for ${toSummarize.length} conversation(s) (concurrency=${concurrency})...`);
         if (remaining > 0) {
             log.info(`  (${remaining} more need summaries - will process on next sync)`);

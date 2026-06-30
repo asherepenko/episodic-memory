@@ -37,12 +37,14 @@ Only processes files that are new or have been modified since last sync.
 Safe to run multiple times - subsequent runs are fast no-ops.
 
 OPTIONS:
-  --background    Run sync in background (for hooks, returns immediately)
-  --limit <n>     Max summaries to generate per run (default: 10)
+  --background        Run sync in background (for hooks, returns immediately)
+  --limit <n>         Max summaries to generate per run (default: 10)
+  --concurrency <n>   Parallel summary workers, 1-16 (overrides
+  -c <n>              EPISODIC_MEMORY_CONCURRENCY; default: 2)
 
 ENV:
   EPISODIC_MEMORY_API_TIMEOUT_MS    Per-call Claude SDK timeout (default: 180000)
-  EPISODIC_MEMORY_CONCURRENCY       Parallel summary workers (default: 2)
+  EPISODIC_MEMORY_CONCURRENCY       Parallel summary workers (default: 2; --concurrency wins)
   EPISODIC_MEMORY_RETRY_ALL         Set to retry files marked as poison-pill
   EPISODIC_MEMORY_DEDUP             Set to "0" to disable summary dedup
   EPISODIC_MEMORY_DEDUP_THRESHOLD   Cosine similarity cutoff (default: 0.95)
@@ -68,6 +70,9 @@ EXAMPLES:
   # Sync and generate up to 50 summaries
   episodic-memory sync --limit 50
 
+  # Sync with 8 parallel summary workers
+  episodic-memory sync --concurrency 8
+
   # Use in Claude Code hook
   # In .claude/hooks/session-end:
   episodic-memory sync --background
@@ -80,6 +85,16 @@ const isBackground = args.includes('--background');
 const limitIdx = args.indexOf('--limit');
 const limitRaw = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : NaN;
 const summaryLimit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10;
+// Parse --concurrency <n> / -c <n> (1-16). Overrides EPISODIC_MEMORY_CONCURRENCY.
+// Survives the --background fork: filteredArgs strips only --background, so the
+// detached worker re-parses the flag and honors the same value.
+const concurrencyIdx = args.findIndex(arg => arg === '--concurrency' || arg === '-c');
+let concurrency;
+if (concurrencyIdx !== -1 && args[concurrencyIdx + 1]) {
+    const value = parseInt(args[concurrencyIdx + 1], 10);
+    if (value >= 1 && value <= 16)
+        concurrency = value;
+}
 // If background mode, fork the process and exit immediately
 if (isBackground) {
     const filteredArgs = args.filter(arg => arg !== '--background');
@@ -140,7 +155,7 @@ console.log(`Log: ${getLogPath()} (tail -f for live progress)\n`);
 async function syncAll() {
     const totals = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [], sourcesWithSummaryWork: 0, totalNeedingSummaries: 0 };
     for (const sourceDir of sourceDirs) {
-        const result = await syncConversations(sourceDir, destDir, { summaryLimit });
+        const result = await syncConversations(sourceDir, destDir, { summaryLimit, concurrency });
         totals.copied += result.copied;
         totals.skipped += result.skipped;
         totals.indexed += result.indexed;
