@@ -44,6 +44,23 @@ export function createTestDb(): { db: Database.Database; cleanup: () => void } {
 }
 
 /**
+ * Resolve a per-test timeout (ms), letting CI / first-install runs extend it.
+ *
+ * Model-backed tests download an encoder on first use, which can blow past a
+ * fixed timeout on a cold cache (e.g. the cross-encoder reranker on a fresh
+ * clone). Set EPISODIC_MEMORY_TEST_TIMEOUT_MS to raise the ceiling without
+ * touching test code. We take the larger of the env value and the per-test
+ * fallback so the override can only lengthen a timeout, never shorten one
+ * below what the test actually needs.
+ */
+export function testTimeoutMs(fallback: number): number {
+  const override = Number(process.env.EPISODIC_MEMORY_TEST_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0
+    ? Math.max(override, fallback)
+    : fallback;
+}
+
+/**
  * Get path to test fixture file
  */
 export function getFixturePath(filename: string): string {

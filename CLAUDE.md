@@ -90,7 +90,7 @@ test/
 ### Test Environment
 - Real SQLite only (no mocks); creates temp DB per test
 - Use env vars to override paths: `TEST_DB_PATH`, `TEST_ARCHIVE_DIR`, `TEST_PROJECTS_DIR`
-- Timeout: 30s (embeddings + indexing slow)
+- Timeout: 30s default (embeddings + indexing slow). Override with `EPISODIC_MEMORY_TEST_TIMEOUT_MS` — it raises both the global vitest `testTimeout` and the per-test model-download timeouts (reranker, embedding-migration) via `testTimeoutMs()` in `test/test-utils.ts`. Raise-only: a value below a test's own fallback is ignored, so the override can't make a slow test flaky. Use it on cold-cache / first-install runs where the cross-encoder model download exceeds 60s, e.g. `EPISODIC_MEMORY_TEST_TIMEOUT_MS=180000 npm test`.
 
 ### Embeddings & API
 - Local embeddings via `@huggingface/transformers`; no external calls

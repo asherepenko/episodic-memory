@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { isRerankEnabled, rerankScores } from '../src/reranker.js';
+import { testTimeoutMs } from './test-utils.js';
 
 describe('isRerankEnabled', () => {
   let prev: string | undefined;
@@ -36,7 +37,7 @@ describe('rerankScores (cross-encoder)', () => {
     ]);
     expect(scores).toHaveLength(2);
     expect(scores[0]).toBeGreaterThan(scores[1]);
-  }, 60000);
+  }, testTimeoutMs(60000));
 
   it('returns an empty array for no passages', async () => {
     expect(await rerankScores('anything', [])).toEqual([]);

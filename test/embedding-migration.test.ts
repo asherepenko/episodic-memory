@@ -13,6 +13,7 @@ import {
 } from '../src/embedding-migration.js';
 import { acquireFileLock, releaseFileLock } from '../src/file-lock.js';
 import { generateExchangeEmbedding, initEmbeddings } from '../src/embeddings.js';
+import { testTimeoutMs } from './test-utils.js';
 
 describe('embedding migration', () => {
   let testDir: string;
@@ -145,7 +146,7 @@ describe('embedding migration', () => {
     expect(versions.every(v => v.embedding_version === EMBEDDING_VERSION)).toBe(true);
 
     db.close();
-  }, 60000);
+  }, testTimeoutMs(60000));
 
   it('runMigrationBatch is a no-op when another process already holds the lock', async () => {
     const db = openDb();

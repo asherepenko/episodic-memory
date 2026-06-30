@@ -5,6 +5,9 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
-    testTimeout: 30000, // 30 seconds for embedding/indexing tests
+    // 30s default for embedding/indexing tests; raise via
+    // EPISODIC_MEMORY_TEST_TIMEOUT_MS for cold-cache / first-install runs
+    // where model downloads dominate (see test/test-utils.ts#testTimeoutMs).
+    testTimeout: Math.max(Number(process.env.EPISODIC_MEMORY_TEST_TIMEOUT_MS) || 0, 30000),
   },
 });
