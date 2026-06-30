@@ -281,6 +281,26 @@ function makeFileMetaCache() {
   };
 }
 
+/**
+ * When a search returns nothing, distinguish "index still building" from a
+ * genuine no-match so callers (CLI + MCP) can hint instead of looking broken.
+ * Returns undefined when the index has content (a real no-match) or when stats
+ * can't be read. An empty index covers both no-DB and freshly-installed states.
+ */
+export async function buildEmptyResultHint(): Promise<string | undefined> {
+  let stats;
+  try {
+    const { getIndexStats } = await import('./stats.js');
+    stats = await getIndexStats();
+  } catch {
+    return undefined;
+  }
+  if (stats.totalConversations === 0) {
+    return 'No conversations are indexed yet — the background sync may still be running (common right after install). Check progress with `episodic-memory status`, or index now with `episodic-memory sync`.';
+  }
+  return undefined;
+}
+
 export async function formatResults(results: Array<SearchResult & { summary?: string }>): Promise<string> {
   if (results.length === 0) {
     return 'No results found.';

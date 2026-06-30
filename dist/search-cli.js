@@ -1,4 +1,4 @@
-import { searchConversations, formatResults, searchMultipleConcepts, formatMultiConceptResults } from './search.js';
+import { searchConversations, formatResults, searchMultipleConcepts, formatMultiConceptResults, buildEmptyResultHint } from './search.js';
 const args = process.argv.slice(2);
 // Parse arguments
 let mode = 'both';
@@ -94,7 +94,13 @@ if (queries.length > 1) {
     const options = { limit, after, before, project, session_id: sessionId, git_branch: gitBranch };
     searchMultipleConcepts(queries, options)
         .then(async (results) => {
-        console.log(await formatMultiConceptResults(results, queries));
+        let out = await formatMultiConceptResults(results, queries);
+        if (results.length === 0) {
+            const hint = await buildEmptyResultHint();
+            if (hint)
+                out += `\n\n💡 ${hint}`;
+        }
+        console.log(out);
     })
         .catch(error => {
         console.error('Error searching:', error);
@@ -114,7 +120,13 @@ else {
     };
     searchConversations(queries[0], options)
         .then(async (results) => {
-        console.log(await formatResults(results));
+        let out = await formatResults(results);
+        if (results.length === 0) {
+            const hint = await buildEmptyResultHint();
+            if (hint)
+                out += `\n\n💡 ${hint}`;
+        }
+        console.log(out);
     })
         .catch(error => {
         console.error('Error searching:', error);

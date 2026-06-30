@@ -5,6 +5,9 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
@@ -6785,16 +6788,655 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs6, exportName) {
+    function addFormats(ajv, list, fs7, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs6[f]);
+        ajv.addFormat(f, fs7[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.default = formatsPlugin;
+  }
+});
+
+// src/paths.ts
+import os from "os";
+import path from "path";
+import fs from "fs";
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+function getSuperpowersDir() {
+  let dir;
+  if (process.env.EPISODIC_MEMORY_CONFIG_DIR) {
+    dir = process.env.EPISODIC_MEMORY_CONFIG_DIR;
+  } else if (process.env.PERSONAL_SUPERPOWERS_DIR) {
+    dir = process.env.PERSONAL_SUPERPOWERS_DIR;
+  } else {
+    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+    if (xdgConfigHome) {
+      dir = path.join(xdgConfigHome, "superpowers");
+    } else {
+      dir = path.join(os.homedir(), ".config", "superpowers");
+    }
+  }
+  return ensureDir(dir);
+}
+function getArchiveDir() {
+  if (process.env.TEST_ARCHIVE_DIR) {
+    return ensureDir(process.env.TEST_ARCHIVE_DIR);
+  }
+  return ensureDir(path.join(getSuperpowersDir(), "conversation-archive"));
+}
+function getIndexDir() {
+  return ensureDir(path.join(getSuperpowersDir(), "conversation-index"));
+}
+function getDbPath() {
+  if (process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH) {
+    return process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH;
+  }
+  return path.join(getIndexDir(), "db.sqlite");
+}
+var init_paths = __esm({
+  "src/paths.ts"() {
+    "use strict";
+  }
+});
+
+// src/embeddings.ts
+import { pipeline, env } from "@huggingface/transformers";
+async function initEmbeddings() {
+  if (!embeddingPipeline) {
+    console.error("Loading embedding model (first run may take time)...");
+    embeddingPipeline = await pipeline(
+      "feature-extraction",
+      MODEL_ID,
+      { dtype: MODEL_DTYPE, progress_callback: () => {
+      } }
+    );
+    console.error("Embedding model loaded");
+  }
+}
+async function generateEmbedding(text) {
+  if (!embeddingPipeline) {
+    await initEmbeddings();
+  }
+  const truncated = text.substring(0, 2e3);
+  const output = await embeddingPipeline(truncated, {
+    pooling: "mean",
+    normalize: true
+  });
+  return Array.from(output.data);
+}
+function withQueryPrefix(query) {
+  if (query.startsWith(BGE_QUERY_PREFIX)) return query;
+  return BGE_QUERY_PREFIX + query;
+}
+async function generateQueryEmbedding(query) {
+  return generateEmbedding(withQueryPrefix(query));
+}
+async function generateExchangeEmbedding(userMessage, assistantMessage, toolNames) {
+  let combined = `User: ${userMessage}
+
+Assistant: ${assistantMessage}`;
+  if (toolNames && toolNames.length > 0) {
+    combined += `
+
+Tools: ${toolNames.join(", ")}`;
+  }
+  return generateEmbedding(combined);
+}
+function distanceToSimilarity(distance) {
+  const similarity = 1 - distance * distance / 2;
+  return Math.max(-1, Math.min(1, similarity));
+}
+var MODEL_ID, MODEL_DTYPE, BGE_QUERY_PREFIX, EMBEDDING_VERSION, embeddingPipeline, EMBEDDER;
+var init_embeddings = __esm({
+  "src/embeddings.ts"() {
+    "use strict";
+    env.allowLocalModels = true;
+    env.useBrowserCache = false;
+    MODEL_ID = "Xenova/bge-small-en-v1.5";
+    MODEL_DTYPE = "q8";
+    BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
+    EMBEDDING_VERSION = 1;
+    embeddingPipeline = null;
+    EMBEDDER = {
+      version: EMBEDDING_VERSION,
+      generate: generateExchangeEmbedding,
+      generateQuery: generateQueryEmbedding,
+      distanceToSimilarity
+    };
+  }
+});
+
+// src/file-lock.ts
+import fs2 from "fs";
+import path2 from "path";
+import { execFileSync } from "child_process";
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function getProcessStartToken(pid) {
+  try {
+    if (process.platform === "linux") {
+      const stat = fs2.readFileSync(`/proc/${pid}/stat`, "utf-8");
+      const after = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+      return after[19] ?? null;
+    }
+    if (process.platform === "darwin") {
+      const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }).trim();
+      return out || null;
+    }
+    if (process.platform === "win32") {
+      const out = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`
+        ],
+        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+      return out || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+function selfToken() {
+  if (selfTokenCache === void 0) selfTokenCache = getProcessStartToken(process.pid);
+  return selfTokenCache;
+}
+function writeLockRecord(fd) {
+  const record2 = { pid: process.pid, token: selfToken() };
+  fs2.writeSync(fd, JSON.stringify(record2));
+}
+function readLockRecord(lockPath) {
+  let raw;
+  try {
+    raw = fs2.readFileSync(lockPath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj.pid === "number" && obj.pid > 0) {
+      return { pid: obj.pid, token: typeof obj.token === "string" ? obj.token : null };
+    }
+    return null;
+  } catch {
+    const pid = parseInt(raw, 10);
+    return Number.isFinite(pid) && pid > 0 ? { pid, token: null } : null;
+  }
+}
+function holderStillValid(record2) {
+  if (!isProcessAlive(record2.pid)) return false;
+  if (record2.token !== null) {
+    const live = getProcessStartToken(record2.pid);
+    if (live !== null && live !== record2.token) return false;
+  }
+  return true;
+}
+function acquireFileLock(lockPath) {
+  fs2.mkdirSync(path2.dirname(lockPath), { recursive: true });
+  try {
+    const fd = fs2.openSync(lockPath, "wx");
+    writeLockRecord(fd);
+    return { path: lockPath, fd };
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+  }
+  const record2 = readLockRecord(lockPath);
+  if (record2 !== null && holderStillValid(record2)) {
+    return null;
+  }
+  try {
+    fs2.unlinkSync(lockPath);
+  } catch {
+  }
+  try {
+    const fd = fs2.openSync(lockPath, "wx");
+    writeLockRecord(fd);
+    return { path: lockPath, fd };
+  } catch (err) {
+    if (err.code === "EEXIST") return null;
+    throw err;
+  }
+}
+function releaseFileLock(handle) {
+  try {
+    fs2.closeSync(handle.fd);
+  } catch {
+  }
+  try {
+    fs2.unlinkSync(handle.path);
+  } catch {
+  }
+}
+var selfTokenCache;
+var init_file_lock = __esm({
+  "src/file-lock.ts"() {
+    "use strict";
+  }
+});
+
+// src/native-binding.ts
+import path3 from "path";
+import { spawnSync } from "child_process";
+import { createRequire } from "module";
+import Database from "better-sqlite3";
+function isNativeBindingError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /could not locate the bindings file|was compiled against a different|NODE_MODULE_VERSION|ERR_DLOPEN|dlopen|invalid ELF header|not a valid Win32 application|better_sqlite3\.node/i.test(
+    msg
+  );
+}
+function bindingUsable() {
+  try {
+    const db = new Database(":memory:");
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+function betterSqlite3InstallRoot() {
+  try {
+    const pkgJson = require2.resolve("better-sqlite3/package.json");
+    const pkgDir = path3.dirname(pkgJson);
+    const nodeModules = path3.dirname(pkgDir);
+    return path3.dirname(nodeModules);
+  } catch {
+    return null;
+  }
+}
+function runRebuild(installRoot, extraArgs) {
+  const isWindows = process.platform === "win32";
+  const npmBin = isWindows ? "npm.cmd" : "npm";
+  spawnSync(npmBin, ["rebuild", "better-sqlite3", "--foreground-scripts", ...extraArgs], {
+    cwd: installRoot,
+    stdio: ["ignore", "inherit", "inherit"],
+    shell: isWindows
+  });
+}
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function waitForBinding(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (bindingUsable()) return;
+    sleepSync(500);
+  }
+}
+function healNativeBinding() {
+  if (healAttempted) return;
+  healAttempted = true;
+  const installRoot = betterSqlite3InstallRoot();
+  if (!installRoot) return;
+  const lockPath = path3.join(installRoot, ".episodic-native-rebuild.lock");
+  const lock = acquireFileLock(lockPath);
+  if (!lock) {
+    console.error("episodic-memory: another process is rebuilding the native binding; waiting...");
+    waitForBinding(12e4);
+    return;
+  }
+  try {
+    if (bindingUsable()) return;
+    console.error(
+      `episodic-memory: rebuilding better-sqlite3 for ${process.version} (Node was likely upgraded after install)...`
+    );
+    runRebuild(installRoot, []);
+    if (bindingUsable()) return;
+    runRebuild(installRoot, ["--build-from-source"]);
+  } finally {
+    releaseFileLock(lock);
+  }
+}
+var require2, healAttempted;
+var init_native_binding = __esm({
+  "src/native-binding.ts"() {
+    "use strict";
+    init_file_lock();
+    require2 = createRequire(import.meta.url);
+    healAttempted = false;
+  }
+});
+
+// src/db.ts
+import Database2 from "better-sqlite3";
+import path4 from "path";
+import fs3 from "fs";
+import * as sqliteVec from "sqlite-vec";
+function openDatabase(dbPath, options) {
+  try {
+    return new Database2(dbPath, options);
+  } catch (err) {
+    if (!isNativeBindingError(err)) throw err;
+    console.error(
+      `episodic-memory: better-sqlite3 native binding failed to load (${err instanceof Error ? err.message.split("\n")[0] : String(err)}); attempting in-process rebuild...`
+    );
+    healNativeBinding();
+    return new Database2(dbPath, options);
+  }
+}
+function migrateSchema(db) {
+  const columns = db.prepare(`SELECT name FROM pragma_table_info('exchanges')`).all();
+  const columnNames = new Set(columns.map((c) => c.name));
+  const migrations = [
+    { name: "last_indexed", sql: "ALTER TABLE exchanges ADD COLUMN last_indexed INTEGER" },
+    { name: "parent_uuid", sql: "ALTER TABLE exchanges ADD COLUMN parent_uuid TEXT" },
+    { name: "is_sidechain", sql: "ALTER TABLE exchanges ADD COLUMN is_sidechain BOOLEAN DEFAULT 0" },
+    { name: "harness", sql: "ALTER TABLE exchanges ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude'" },
+    { name: "session_id", sql: "ALTER TABLE exchanges ADD COLUMN session_id TEXT" },
+    { name: "cwd", sql: "ALTER TABLE exchanges ADD COLUMN cwd TEXT" },
+    { name: "git_branch", sql: "ALTER TABLE exchanges ADD COLUMN git_branch TEXT" },
+    { name: "claude_version", sql: "ALTER TABLE exchanges ADD COLUMN claude_version TEXT" },
+    { name: "agent_version", sql: "ALTER TABLE exchanges ADD COLUMN agent_version TEXT" },
+    { name: "model", sql: "ALTER TABLE exchanges ADD COLUMN model TEXT" },
+    { name: "model_provider", sql: "ALTER TABLE exchanges ADD COLUMN model_provider TEXT" },
+    { name: "thinking_level", sql: "ALTER TABLE exchanges ADD COLUMN thinking_level TEXT" },
+    { name: "thinking_disabled", sql: "ALTER TABLE exchanges ADD COLUMN thinking_disabled BOOLEAN" },
+    { name: "thinking_triggers", sql: "ALTER TABLE exchanges ADD COLUMN thinking_triggers TEXT" },
+    { name: "embedding_version", sql: "ALTER TABLE exchanges ADD COLUMN embedding_version INTEGER NOT NULL DEFAULT 0" }
+  ];
+  let migrated = false;
+  for (const migration of migrations) {
+    if (!columnNames.has(migration.name)) {
+      console.log(`Migrating schema: adding ${migration.name} column...`);
+      db.prepare(migration.sql).run();
+      migrated = true;
+    }
+  }
+  if (migrated) {
+    console.log("Migration complete.");
+  }
+  migrateToolCallsCascade(db);
+}
+function migrateToolCallsCascade(db) {
+  const row = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_calls'`
+  ).get();
+  if (!row) return;
+  if (row.sql.toUpperCase().includes("ON DELETE CASCADE")) return;
+  console.log("Migrating tool_calls to ON DELETE CASCADE schema...");
+  const orphanCount = db.prepare(
+    `SELECT COUNT(*) AS c FROM tool_calls
+     WHERE exchange_id NOT IN (SELECT id FROM exchanges)`
+  ).get().c;
+  if (orphanCount > 0) {
+    console.log(`  Removing ${orphanCount} orphaned tool_calls row(s)`);
+  }
+  db.pragma("foreign_keys = OFF");
+  const tx = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE tool_calls_new (
+        id TEXT PRIMARY KEY,
+        exchange_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        tool_input TEXT,
+        tool_result TEXT,
+        is_error BOOLEAN DEFAULT 0,
+        timestamp TEXT NOT NULL,
+        FOREIGN KEY (exchange_id) REFERENCES exchanges(id) ON DELETE CASCADE
+      )
+    `);
+    db.exec(`
+      INSERT INTO tool_calls_new
+      SELECT id, exchange_id, tool_name, tool_input, tool_result, is_error, timestamp
+      FROM tool_calls
+      WHERE exchange_id IN (SELECT id FROM exchanges)
+    `);
+    db.exec(`DROP TABLE tool_calls`);
+    db.exec(`ALTER TABLE tool_calls_new RENAME TO tool_calls`);
+  });
+  tx();
+  db.pragma("foreign_keys = ON");
+  console.log("  tool_calls migration complete.");
+}
+function initDatabase() {
+  const dbPath = getDbPath();
+  const dbDir = path4.dirname(dbPath);
+  if (!fs3.existsSync(dbDir)) {
+    fs3.mkdirSync(dbDir, { recursive: true });
+  }
+  const db = openDatabase(dbPath);
+  sqliteVec.load(db);
+  db.pragma("journal_mode = WAL");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS exchanges (
+      id TEXT PRIMARY KEY,
+      project TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      user_message TEXT NOT NULL,
+      assistant_message TEXT NOT NULL,
+      archive_path TEXT NOT NULL,
+      line_start INTEGER NOT NULL,
+      line_end INTEGER NOT NULL,
+      embedding BLOB,
+      last_indexed INTEGER,
+      parent_uuid TEXT,
+      is_sidechain BOOLEAN DEFAULT 0,
+      harness TEXT NOT NULL DEFAULT 'claude',
+      session_id TEXT,
+      cwd TEXT,
+      git_branch TEXT,
+      claude_version TEXT,
+      agent_version TEXT,
+      model TEXT,
+      model_provider TEXT,
+      thinking_level TEXT,
+      thinking_disabled BOOLEAN,
+      thinking_triggers TEXT,
+      embedding_version INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tool_calls (
+      id TEXT PRIMARY KEY,
+      exchange_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      tool_input TEXT,
+      tool_result TEXT,
+      is_error BOOLEAN DEFAULT 0,
+      timestamp TEXT NOT NULL,
+      FOREIGN KEY (exchange_id) REFERENCES exchanges(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS vec_exchanges USING vec0(
+      id TEXT PRIMARY KEY,
+      embedding FLOAT[384]
+    )
+  `);
+  migrateSchema(db);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_timestamp ON exchanges(timestamp DESC)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_session_id ON exchanges(session_id)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_project ON exchanges(project)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_harness ON exchanges(harness)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sidechain ON exchanges(is_sidechain)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_git_branch ON exchanges(git_branch)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_tool_name ON tool_calls(tool_name)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_tool_exchange ON tool_calls(exchange_id)
+  `);
+  return db;
+}
+var init_db = __esm({
+  "src/db.ts"() {
+    "use strict";
+    init_paths();
+    init_embeddings();
+    init_native_binding();
+  }
+});
+
+// src/summary-sentinel.ts
+var summary_sentinel_exports = {};
+__export(summary_sentinel_exports, {
+  hasRealSummary: () => hasRealSummary
+});
+import * as fs4 from "fs";
+function hasRealSummary(summaryPath) {
+  if (!fs4.existsSync(summaryPath)) return false;
+  let content;
+  try {
+    content = fs4.readFileSync(summaryPath, "utf-8");
+  } catch {
+    return false;
+  }
+  return content.length > 0;
+}
+var init_summary_sentinel = __esm({
+  "src/summary-sentinel.ts"() {
+    "use strict";
+  }
+});
+
+// src/stats.ts
+var stats_exports = {};
+__export(stats_exports, {
+  formatStats: () => formatStats,
+  getIndexStats: () => getIndexStats
+});
+async function getIndexStats(dbPath) {
+  const resolvedDbPath = dbPath || getDbPath();
+  const fs7 = await import("fs");
+  if (!fs7.existsSync(resolvedDbPath)) {
+    return {
+      totalConversations: 0,
+      conversationsWithSummaries: 0,
+      conversationsWithoutSummaries: 0,
+      totalExchanges: 0,
+      projectCount: 0
+    };
+  }
+  const db = openDatabase(resolvedDbPath, { readonly: true });
+  try {
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
+    const hasExchanges = tables.some((t) => t.name === "exchanges");
+    if (!hasExchanges) {
+      return {
+        totalConversations: 0,
+        conversationsWithSummaries: 0,
+        conversationsWithoutSummaries: 0,
+        totalExchanges: 0,
+        projectCount: 0
+      };
+    }
+    const totalConversations = db.prepare("SELECT COUNT(DISTINCT archive_path) as count FROM exchanges").get();
+    const { hasRealSummary: hasRealSummary2 } = await Promise.resolve().then(() => (init_summary_sentinel(), summary_sentinel_exports));
+    const conversationPaths = db.prepare("SELECT DISTINCT archive_path FROM exchanges").all();
+    let withSummariesCount = 0;
+    for (const { archive_path } of conversationPaths) {
+      const summaryPath = archive_path.replace(".jsonl", "-summary.txt");
+      if (hasRealSummary2(summaryPath)) {
+        withSummariesCount++;
+      }
+    }
+    const totalExchanges = db.prepare("SELECT COUNT(*) as count FROM exchanges").get();
+    const dateRange = db.prepare("SELECT MIN(timestamp) as earliest, MAX(timestamp) as latest FROM exchanges").get();
+    const projectCount = db.prepare("SELECT COUNT(DISTINCT project) as count FROM exchanges").get();
+    const topProjects = db.prepare(`
+      SELECT project, COUNT(DISTINCT archive_path) as count
+      FROM exchanges
+      GROUP BY project
+      ORDER BY count DESC
+      LIMIT 10
+    `).all();
+    return {
+      totalConversations: totalConversations.count,
+      conversationsWithSummaries: withSummariesCount,
+      conversationsWithoutSummaries: totalConversations.count - withSummariesCount,
+      totalExchanges: totalExchanges.count,
+      dateRange: dateRange?.earliest ? {
+        earliest: dateRange.earliest,
+        latest: dateRange.latest
+      } : void 0,
+      projectCount: projectCount.count,
+      topProjects
+    };
+  } finally {
+    db.close();
+  }
+}
+function formatStats(stats) {
+  let output = "Episodic Memory Index Statistics\n";
+  output += "=".repeat(50) + "\n\n";
+  output += `Total Conversations: ${stats.totalConversations.toLocaleString()}
+`;
+  output += `Total Exchanges: ${stats.totalExchanges.toLocaleString()}
+
+`;
+  output += `With Summaries: ${stats.conversationsWithSummaries.toLocaleString()}
+`;
+  output += `Without Summaries: ${stats.conversationsWithoutSummaries.toLocaleString()}
+`;
+  if (stats.conversationsWithoutSummaries > 0) {
+    const percentage = (stats.conversationsWithoutSummaries / stats.totalConversations * 100).toFixed(1);
+    output += `  (${percentage}% missing summaries)
+`;
+  }
+  output += "\n";
+  if (stats.dateRange) {
+    output += `Date Range:
+`;
+    output += `  Earliest: ${new Date(stats.dateRange.earliest).toLocaleDateString()}
+`;
+    output += `  Latest: ${new Date(stats.dateRange.latest).toLocaleDateString()}
+
+`;
+  }
+  output += `Unique Projects: ${stats.projectCount.toLocaleString()}
+
+`;
+  if (stats.topProjects && stats.topProjects.length > 0) {
+    output += `Top Projects by Conversation Count:
+`;
+    for (const { project, count } of stats.topProjects) {
+      const displayProject = project || "(unknown)";
+      output += `  ${count.toString().padStart(4)} - ${displayProject}
+`;
+    }
+  }
+  return output;
+}
+var init_stats = __esm({
+  "src/stats.ts"() {
+    "use strict";
+    init_paths();
+    init_db();
   }
 });
 
@@ -24665,482 +25307,10 @@ var StdioServerTransport = class {
   }
 };
 
-// src/db.ts
-import Database2 from "better-sqlite3";
-import path4 from "path";
-import fs3 from "fs";
-import * as sqliteVec from "sqlite-vec";
-
-// src/paths.ts
-import os from "os";
-import path from "path";
-import fs from "fs";
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-function getSuperpowersDir() {
-  let dir;
-  if (process.env.EPISODIC_MEMORY_CONFIG_DIR) {
-    dir = process.env.EPISODIC_MEMORY_CONFIG_DIR;
-  } else if (process.env.PERSONAL_SUPERPOWERS_DIR) {
-    dir = process.env.PERSONAL_SUPERPOWERS_DIR;
-  } else {
-    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-    if (xdgConfigHome) {
-      dir = path.join(xdgConfigHome, "superpowers");
-    } else {
-      dir = path.join(os.homedir(), ".config", "superpowers");
-    }
-  }
-  return ensureDir(dir);
-}
-function getArchiveDir() {
-  if (process.env.TEST_ARCHIVE_DIR) {
-    return ensureDir(process.env.TEST_ARCHIVE_DIR);
-  }
-  return ensureDir(path.join(getSuperpowersDir(), "conversation-archive"));
-}
-function getIndexDir() {
-  return ensureDir(path.join(getSuperpowersDir(), "conversation-index"));
-}
-function getDbPath() {
-  if (process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH) {
-    return process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH;
-  }
-  return path.join(getIndexDir(), "db.sqlite");
-}
-
-// src/embeddings.ts
-import { pipeline, env } from "@huggingface/transformers";
-env.allowLocalModels = true;
-env.useBrowserCache = false;
-var MODEL_ID = "Xenova/bge-small-en-v1.5";
-var MODEL_DTYPE = "q8";
-var BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
-var EMBEDDING_VERSION = 1;
-var embeddingPipeline = null;
-async function initEmbeddings() {
-  if (!embeddingPipeline) {
-    console.error("Loading embedding model (first run may take time)...");
-    embeddingPipeline = await pipeline(
-      "feature-extraction",
-      MODEL_ID,
-      { dtype: MODEL_DTYPE, progress_callback: () => {
-      } }
-    );
-    console.error("Embedding model loaded");
-  }
-}
-async function generateEmbedding(text) {
-  if (!embeddingPipeline) {
-    await initEmbeddings();
-  }
-  const truncated = text.substring(0, 2e3);
-  const output = await embeddingPipeline(truncated, {
-    pooling: "mean",
-    normalize: true
-  });
-  return Array.from(output.data);
-}
-function withQueryPrefix(query) {
-  if (query.startsWith(BGE_QUERY_PREFIX)) return query;
-  return BGE_QUERY_PREFIX + query;
-}
-async function generateQueryEmbedding(query) {
-  return generateEmbedding(withQueryPrefix(query));
-}
-async function generateExchangeEmbedding(userMessage, assistantMessage, toolNames) {
-  let combined = `User: ${userMessage}
-
-Assistant: ${assistantMessage}`;
-  if (toolNames && toolNames.length > 0) {
-    combined += `
-
-Tools: ${toolNames.join(", ")}`;
-  }
-  return generateEmbedding(combined);
-}
-function distanceToSimilarity(distance) {
-  const similarity = 1 - distance * distance / 2;
-  return Math.max(-1, Math.min(1, similarity));
-}
-var EMBEDDER = {
-  version: EMBEDDING_VERSION,
-  generate: generateExchangeEmbedding,
-  generateQuery: generateQueryEmbedding,
-  distanceToSimilarity
-};
-
-// src/native-binding.ts
-import path3 from "path";
-import { spawnSync } from "child_process";
-import { createRequire } from "module";
-import Database from "better-sqlite3";
-
-// src/file-lock.ts
-import fs2 from "fs";
-import path2 from "path";
-import { execFileSync } from "child_process";
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-function getProcessStartToken(pid) {
-  try {
-    if (process.platform === "linux") {
-      const stat = fs2.readFileSync(`/proc/${pid}/stat`, "utf-8");
-      const after = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
-      return after[19] ?? null;
-    }
-    if (process.platform === "darwin") {
-      const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"]
-      }).trim();
-      return out || null;
-    }
-    if (process.platform === "win32") {
-      const out = execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`
-        ],
-        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }
-      ).trim();
-      return out || null;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-var selfTokenCache;
-function selfToken() {
-  if (selfTokenCache === void 0) selfTokenCache = getProcessStartToken(process.pid);
-  return selfTokenCache;
-}
-function writeLockRecord(fd) {
-  const record2 = { pid: process.pid, token: selfToken() };
-  fs2.writeSync(fd, JSON.stringify(record2));
-}
-function readLockRecord(lockPath) {
-  let raw;
-  try {
-    raw = fs2.readFileSync(lockPath, "utf-8").trim();
-  } catch {
-    return null;
-  }
-  if (!raw) return null;
-  try {
-    const obj = JSON.parse(raw);
-    if (obj && typeof obj.pid === "number" && obj.pid > 0) {
-      return { pid: obj.pid, token: typeof obj.token === "string" ? obj.token : null };
-    }
-    return null;
-  } catch {
-    const pid = parseInt(raw, 10);
-    return Number.isFinite(pid) && pid > 0 ? { pid, token: null } : null;
-  }
-}
-function holderStillValid(record2) {
-  if (!isProcessAlive(record2.pid)) return false;
-  if (record2.token !== null) {
-    const live = getProcessStartToken(record2.pid);
-    if (live !== null && live !== record2.token) return false;
-  }
-  return true;
-}
-function acquireFileLock(lockPath) {
-  fs2.mkdirSync(path2.dirname(lockPath), { recursive: true });
-  try {
-    const fd = fs2.openSync(lockPath, "wx");
-    writeLockRecord(fd);
-    return { path: lockPath, fd };
-  } catch (err) {
-    if (err.code !== "EEXIST") throw err;
-  }
-  const record2 = readLockRecord(lockPath);
-  if (record2 !== null && holderStillValid(record2)) {
-    return null;
-  }
-  try {
-    fs2.unlinkSync(lockPath);
-  } catch {
-  }
-  try {
-    const fd = fs2.openSync(lockPath, "wx");
-    writeLockRecord(fd);
-    return { path: lockPath, fd };
-  } catch (err) {
-    if (err.code === "EEXIST") return null;
-    throw err;
-  }
-}
-function releaseFileLock(handle) {
-  try {
-    fs2.closeSync(handle.fd);
-  } catch {
-  }
-  try {
-    fs2.unlinkSync(handle.path);
-  } catch {
-  }
-}
-
-// src/native-binding.ts
-var require2 = createRequire(import.meta.url);
-var healAttempted = false;
-function isNativeBindingError(err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /could not locate the bindings file|was compiled against a different|NODE_MODULE_VERSION|ERR_DLOPEN|dlopen|invalid ELF header|not a valid Win32 application|better_sqlite3\.node/i.test(
-    msg
-  );
-}
-function bindingUsable() {
-  try {
-    const db = new Database(":memory:");
-    db.close();
-    return true;
-  } catch {
-    return false;
-  }
-}
-function betterSqlite3InstallRoot() {
-  try {
-    const pkgJson = require2.resolve("better-sqlite3/package.json");
-    const pkgDir = path3.dirname(pkgJson);
-    const nodeModules = path3.dirname(pkgDir);
-    return path3.dirname(nodeModules);
-  } catch {
-    return null;
-  }
-}
-function runRebuild(installRoot, extraArgs) {
-  const isWindows = process.platform === "win32";
-  const npmBin = isWindows ? "npm.cmd" : "npm";
-  spawnSync(npmBin, ["rebuild", "better-sqlite3", "--foreground-scripts", ...extraArgs], {
-    cwd: installRoot,
-    stdio: ["ignore", "inherit", "inherit"],
-    shell: isWindows
-  });
-}
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-function waitForBinding(timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (bindingUsable()) return;
-    sleepSync(500);
-  }
-}
-function healNativeBinding() {
-  if (healAttempted) return;
-  healAttempted = true;
-  const installRoot = betterSqlite3InstallRoot();
-  if (!installRoot) return;
-  const lockPath = path3.join(installRoot, ".episodic-native-rebuild.lock");
-  const lock = acquireFileLock(lockPath);
-  if (!lock) {
-    console.error("episodic-memory: another process is rebuilding the native binding; waiting...");
-    waitForBinding(12e4);
-    return;
-  }
-  try {
-    if (bindingUsable()) return;
-    console.error(
-      `episodic-memory: rebuilding better-sqlite3 for ${process.version} (Node was likely upgraded after install)...`
-    );
-    runRebuild(installRoot, []);
-    if (bindingUsable()) return;
-    runRebuild(installRoot, ["--build-from-source"]);
-  } finally {
-    releaseFileLock(lock);
-  }
-}
-
-// src/db.ts
-function openDatabase(dbPath, options) {
-  try {
-    return new Database2(dbPath, options);
-  } catch (err) {
-    if (!isNativeBindingError(err)) throw err;
-    console.error(
-      `episodic-memory: better-sqlite3 native binding failed to load (${err instanceof Error ? err.message.split("\n")[0] : String(err)}); attempting in-process rebuild...`
-    );
-    healNativeBinding();
-    return new Database2(dbPath, options);
-  }
-}
-function migrateSchema(db) {
-  const columns = db.prepare(`SELECT name FROM pragma_table_info('exchanges')`).all();
-  const columnNames = new Set(columns.map((c) => c.name));
-  const migrations = [
-    { name: "last_indexed", sql: "ALTER TABLE exchanges ADD COLUMN last_indexed INTEGER" },
-    { name: "parent_uuid", sql: "ALTER TABLE exchanges ADD COLUMN parent_uuid TEXT" },
-    { name: "is_sidechain", sql: "ALTER TABLE exchanges ADD COLUMN is_sidechain BOOLEAN DEFAULT 0" },
-    { name: "harness", sql: "ALTER TABLE exchanges ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude'" },
-    { name: "session_id", sql: "ALTER TABLE exchanges ADD COLUMN session_id TEXT" },
-    { name: "cwd", sql: "ALTER TABLE exchanges ADD COLUMN cwd TEXT" },
-    { name: "git_branch", sql: "ALTER TABLE exchanges ADD COLUMN git_branch TEXT" },
-    { name: "claude_version", sql: "ALTER TABLE exchanges ADD COLUMN claude_version TEXT" },
-    { name: "agent_version", sql: "ALTER TABLE exchanges ADD COLUMN agent_version TEXT" },
-    { name: "model", sql: "ALTER TABLE exchanges ADD COLUMN model TEXT" },
-    { name: "model_provider", sql: "ALTER TABLE exchanges ADD COLUMN model_provider TEXT" },
-    { name: "thinking_level", sql: "ALTER TABLE exchanges ADD COLUMN thinking_level TEXT" },
-    { name: "thinking_disabled", sql: "ALTER TABLE exchanges ADD COLUMN thinking_disabled BOOLEAN" },
-    { name: "thinking_triggers", sql: "ALTER TABLE exchanges ADD COLUMN thinking_triggers TEXT" },
-    { name: "embedding_version", sql: "ALTER TABLE exchanges ADD COLUMN embedding_version INTEGER NOT NULL DEFAULT 0" }
-  ];
-  let migrated = false;
-  for (const migration of migrations) {
-    if (!columnNames.has(migration.name)) {
-      console.log(`Migrating schema: adding ${migration.name} column...`);
-      db.prepare(migration.sql).run();
-      migrated = true;
-    }
-  }
-  if (migrated) {
-    console.log("Migration complete.");
-  }
-  migrateToolCallsCascade(db);
-}
-function migrateToolCallsCascade(db) {
-  const row = db.prepare(
-    `SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_calls'`
-  ).get();
-  if (!row) return;
-  if (row.sql.toUpperCase().includes("ON DELETE CASCADE")) return;
-  console.log("Migrating tool_calls to ON DELETE CASCADE schema...");
-  const orphanCount = db.prepare(
-    `SELECT COUNT(*) AS c FROM tool_calls
-     WHERE exchange_id NOT IN (SELECT id FROM exchanges)`
-  ).get().c;
-  if (orphanCount > 0) {
-    console.log(`  Removing ${orphanCount} orphaned tool_calls row(s)`);
-  }
-  db.pragma("foreign_keys = OFF");
-  const tx = db.transaction(() => {
-    db.exec(`
-      CREATE TABLE tool_calls_new (
-        id TEXT PRIMARY KEY,
-        exchange_id TEXT NOT NULL,
-        tool_name TEXT NOT NULL,
-        tool_input TEXT,
-        tool_result TEXT,
-        is_error BOOLEAN DEFAULT 0,
-        timestamp TEXT NOT NULL,
-        FOREIGN KEY (exchange_id) REFERENCES exchanges(id) ON DELETE CASCADE
-      )
-    `);
-    db.exec(`
-      INSERT INTO tool_calls_new
-      SELECT id, exchange_id, tool_name, tool_input, tool_result, is_error, timestamp
-      FROM tool_calls
-      WHERE exchange_id IN (SELECT id FROM exchanges)
-    `);
-    db.exec(`DROP TABLE tool_calls`);
-    db.exec(`ALTER TABLE tool_calls_new RENAME TO tool_calls`);
-  });
-  tx();
-  db.pragma("foreign_keys = ON");
-  console.log("  tool_calls migration complete.");
-}
-function initDatabase() {
-  const dbPath = getDbPath();
-  const dbDir = path4.dirname(dbPath);
-  if (!fs3.existsSync(dbDir)) {
-    fs3.mkdirSync(dbDir, { recursive: true });
-  }
-  const db = openDatabase(dbPath);
-  sqliteVec.load(db);
-  db.pragma("journal_mode = WAL");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS exchanges (
-      id TEXT PRIMARY KEY,
-      project TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      user_message TEXT NOT NULL,
-      assistant_message TEXT NOT NULL,
-      archive_path TEXT NOT NULL,
-      line_start INTEGER NOT NULL,
-      line_end INTEGER NOT NULL,
-      embedding BLOB,
-      last_indexed INTEGER,
-      parent_uuid TEXT,
-      is_sidechain BOOLEAN DEFAULT 0,
-      harness TEXT NOT NULL DEFAULT 'claude',
-      session_id TEXT,
-      cwd TEXT,
-      git_branch TEXT,
-      claude_version TEXT,
-      agent_version TEXT,
-      model TEXT,
-      model_provider TEXT,
-      thinking_level TEXT,
-      thinking_disabled BOOLEAN,
-      thinking_triggers TEXT,
-      embedding_version INTEGER NOT NULL DEFAULT 0
-    )
-  `);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tool_calls (
-      id TEXT PRIMARY KEY,
-      exchange_id TEXT NOT NULL,
-      tool_name TEXT NOT NULL,
-      tool_input TEXT,
-      tool_result TEXT,
-      is_error BOOLEAN DEFAULT 0,
-      timestamp TEXT NOT NULL,
-      FOREIGN KEY (exchange_id) REFERENCES exchanges(id) ON DELETE CASCADE
-    )
-  `);
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS vec_exchanges USING vec0(
-      id TEXT PRIMARY KEY,
-      embedding FLOAT[384]
-    )
-  `);
-  migrateSchema(db);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_timestamp ON exchanges(timestamp DESC)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_session_id ON exchanges(session_id)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_project ON exchanges(project)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_harness ON exchanges(harness)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_sidechain ON exchanges(is_sidechain)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_git_branch ON exchanges(git_branch)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_tool_name ON tool_calls(tool_name)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_tool_exchange ON tool_calls(exchange_id)
-  `);
-  return db;
-}
-
 // src/search.ts
-import fs4 from "fs";
+init_db();
+init_embeddings();
+import fs5 from "fs";
 import readline from "readline";
 function buildSearchFilters(options) {
   const parts = [];
@@ -25291,8 +25461,8 @@ async function searchConversations(query, options = {}) {
     const exchange = exchangeFromRow(row);
     const summaryPath = row.archive_path.replace(".jsonl", "-summary.txt");
     let summary;
-    if (fs4.existsSync(summaryPath)) {
-      summary = fs4.readFileSync(summaryPath, "utf-8").trim();
+    if (fs5.existsSync(summaryPath)) {
+      summary = fs5.readFileSync(summaryPath, "utf-8").trim();
     }
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
@@ -25306,7 +25476,7 @@ async function searchConversations(query, options = {}) {
 }
 async function countLines(filePath) {
   try {
-    const fileStream = fs4.createReadStream(filePath);
+    const fileStream = fs5.createReadStream(filePath);
     const rl = readline.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -25322,7 +25492,7 @@ async function countLines(filePath) {
 }
 function getFileSizeInKB(filePath) {
   try {
-    const stats = fs4.lstatSync(filePath);
+    const stats = fs5.lstatSync(filePath);
     return Math.round(stats.size / 1024 * 10) / 10;
   } catch (error51) {
     return 0;
@@ -25347,6 +25517,19 @@ function makeFileMetaCache() {
       return v2;
     }
   };
+}
+async function buildEmptyResultHint() {
+  let stats;
+  try {
+    const { getIndexStats: getIndexStats2 } = await Promise.resolve().then(() => (init_stats(), stats_exports));
+    stats = await getIndexStats2();
+  } catch {
+    return void 0;
+  }
+  if (stats.totalConversations === 0) {
+    return "No conversations are indexed yet \u2014 the background sync may still be running (common right after install). Check progress with `episodic-memory status`, or index now with `episodic-memory sync`.";
+  }
+  return void 0;
 }
 async function formatResults(results) {
   if (results.length === 0) {
@@ -27098,7 +27281,8 @@ ${result}
 var VERSION = "1.4.14";
 
 // src/mcp-server.ts
-import fs5 from "fs";
+init_paths();
+import fs6 from "fs";
 import path5 from "path";
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
@@ -27219,18 +27403,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           git_branch: params.git_branch
         };
         const results = await searchMultipleConcepts(params.query, options);
+        const hint = results.length === 0 ? await buildEmptyResultHint() : void 0;
         if (params.response_format === "json") {
           resultText = JSON.stringify(
             {
               results,
               count: results.length,
-              concepts: params.query
+              concepts: params.query,
+              ...hint ? { hint } : {}
             },
             null,
             2
           );
         } else {
           resultText = await formatMultiConceptResults(results, params.query);
+          if (hint) resultText += `
+
+\u{1F4A1} ${hint}`;
         }
       } else {
         const options = {
@@ -27243,6 +27432,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           git_branch: params.git_branch
         };
         const results = await searchConversations(params.query, options);
+        const hint = results.length === 0 ? await buildEmptyResultHint() : void 0;
         if (params.response_format === "json") {
           resultText = JSON.stringify(
             {
@@ -27252,13 +27442,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 snippet: r.snippet
               })),
               count: results.length,
-              mode: params.mode
+              mode: params.mode,
+              ...hint ? { hint } : {}
             },
             null,
             2
           );
         } else {
           resultText = await formatResults(results);
+          if (hint) resultText += `
+
+\u{1F4A1} ${hint}`;
         }
       }
       return {
@@ -27277,10 +27471,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path5.sep)) {
         throw new Error(`Access denied: path is outside the archive directory`);
       }
-      if (!fs5.existsSync(resolvedPath)) {
+      if (!fs6.existsSync(resolvedPath)) {
         throw new Error(`File not found: ${params.path}`);
       }
-      const jsonlContent = fs5.readFileSync(resolvedPath, "utf-8");
+      const jsonlContent = fs6.readFileSync(resolvedPath, "utf-8");
       const markdownContent = formatConversationAsMarkdown(
         jsonlContent,
         params.startLine,

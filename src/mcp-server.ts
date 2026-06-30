@@ -18,6 +18,7 @@ import {
   searchMultipleConcepts,
   formatResults,
   formatMultiConceptResults,
+  buildEmptyResultHint,
   SearchOptions,
 } from './search.js';
 import { formatConversationAsMarkdown } from './show.js';
@@ -218,6 +219,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         const results = await searchMultipleConcepts(params.query, options);
+        const hint = results.length === 0 ? await buildEmptyResultHint() : undefined;
 
         if (params.response_format === 'json') {
           resultText = JSON.stringify(
@@ -225,12 +227,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               results: results,
               count: results.length,
               concepts: params.query,
+              ...(hint ? { hint } : {}),
             },
             null,
             2
           );
         } else {
           resultText = await formatMultiConceptResults(results, params.query);
+          if (hint) resultText += `\n\n💡 ${hint}`;
         }
       } else {
         // Single-concept search
@@ -245,6 +249,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         const results = await searchConversations(params.query, options);
+        const hint = results.length === 0 ? await buildEmptyResultHint() : undefined;
 
         if (params.response_format === 'json') {
           resultText = JSON.stringify(
@@ -256,12 +261,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               })),
               count: results.length,
               mode: params.mode,
+              ...(hint ? { hint } : {}),
             },
             null,
             2
           );
         } else {
           resultText = await formatResults(results);
+          if (hint) resultText += `\n\n💡 ${hint}`;
         }
       }
 

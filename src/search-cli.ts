@@ -1,4 +1,4 @@
-import { searchConversations, formatResults, searchMultipleConcepts, formatMultiConceptResults, SearchOptions } from './search.js';
+import { searchConversations, formatResults, searchMultipleConcepts, formatMultiConceptResults, buildEmptyResultHint, SearchOptions } from './search.js';
 
 const args = process.argv.slice(2);
 
@@ -92,7 +92,12 @@ if (queries.length > 1) {
 
   searchMultipleConcepts(queries, options)
     .then(async results => {
-      console.log(await formatMultiConceptResults(results, queries));
+      let out = await formatMultiConceptResults(results, queries);
+      if (results.length === 0) {
+        const hint = await buildEmptyResultHint();
+        if (hint) out += `\n\n💡 ${hint}`;
+      }
+      console.log(out);
     })
     .catch(error => {
       console.error('Error searching:', error);
@@ -112,7 +117,12 @@ if (queries.length > 1) {
 
   searchConversations(queries[0], options)
     .then(async results => {
-      console.log(await formatResults(results));
+      let out = await formatResults(results);
+      if (results.length === 0) {
+        const hint = await buildEmptyResultHint();
+        if (hint) out += `\n\n💡 ${hint}`;
+      }
+      console.log(out);
     })
     .catch(error => {
       console.error('Error searching:', error);

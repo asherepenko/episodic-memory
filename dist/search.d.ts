@@ -17,6 +17,13 @@ export interface SearchOptions {
  */
 export declare function l2DistanceToCosineSimilarity(distance: number): number;
 export declare function searchConversations(query: string, options?: SearchOptions): Promise<SearchResult[]>;
+/**
+ * When a search returns nothing, distinguish "index still building" from a
+ * genuine no-match so callers (CLI + MCP) can hint instead of looking broken.
+ * Returns undefined when the index has content (a real no-match) or when stats
+ * can't be read. An empty index covers both no-DB and freshly-installed states.
+ */
+export declare function buildEmptyResultHint(): Promise<string | undefined>;
 export declare function formatResults(results: Array<SearchResult & {
     summary?: string;
 }>): Promise<string>;
