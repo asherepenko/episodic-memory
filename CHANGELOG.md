@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-07-01
+
+### Changed
+- **Test suite tolerates slow first runs.** On a fresh clone or CI machine, the very first test run has to download the embedding and reranker models, which can take longer than the fixed timeouts and report a false failure even though nothing is wrong. The test timeout is now adjustable with `EPISODIC_MEMORY_TEST_TIMEOUT_MS` (e.g. `EPISODIC_MEMORY_TEST_TIMEOUT_MS=180000 npm test`); it only ever extends a timeout, never shortens one. This is a developer/CI-only change with no effect on the installed plugin.
+
 ## [1.5.1] - 2026-07-01
 
 ### Fixed
