@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { getIndexStats } from '../src/stats.js';
+import { getIndexStats, formatStats, type IndexStats } from '../src/stats.js';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 
@@ -131,5 +131,28 @@ describe('stats command', () => {
     expect(stats.projectCount).toBe(2);
     expect(stats.topProjects).toBeDefined();
     expect(stats.topProjects?.length).toBe(2);
+  });
+
+  describe('formatStats health lines', () => {
+    const base: IndexStats = {
+      totalConversations: 10,
+      conversationsWithSummaries: 10,
+      conversationsWithoutSummaries: 0,
+      totalExchanges: 50,
+      projectCount: 1,
+    };
+
+    it('renders stale-embedding and poison lines when present', () => {
+      const out = formatStats({ ...base, staleEmbeddings: 42, poisonConversations: 3 });
+      expect(out).toContain('Stale Embeddings: 42 exchange(s) on an old model');
+      expect(out).toContain('Permanently Skipped: 3 conversation(s)');
+      expect(out).toContain('EPISODIC_MEMORY_RETRY_ALL=1');
+    });
+
+    it('omits both lines when zero or undefined', () => {
+      const out = formatStats({ ...base, staleEmbeddings: 0 });
+      expect(out).not.toContain('Stale Embeddings:');
+      expect(out).not.toContain('Permanently Skipped:');
+    });
   });
 });

@@ -3225,8 +3225,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path6) {
-      let input = path6;
+    function removeDotSegments(path7) {
+      let input = path7;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3425,8 +3425,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path6, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path6 && path6 !== "/" ? path6 : void 0;
+        const [path7, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path7 && path7 !== "/" ? path7 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7324,6 +7324,81 @@ var init_summary_sentinel = __esm({
   }
 });
 
+// src/embedding-migration.ts
+var embedding_migration_exports = {};
+__export(embedding_migration_exports, {
+  EMBEDDING_VERSION: () => EMBEDDING_VERSION,
+  countStale: () => countStale,
+  getMigrationLockPath: () => getMigrationLockPath,
+  pickStaleBatch: () => pickStaleBatch,
+  recordReembedded: () => recordReembedded,
+  runMigrationBatch: () => runMigrationBatch
+});
+import path5 from "path";
+function pickStaleBatch(db, limit) {
+  return db.prepare(`
+    SELECT
+      e.id,
+      e.user_message,
+      e.assistant_message,
+      GROUP_CONCAT(DISTINCT tc.tool_name) AS tools
+    FROM exchanges e
+    LEFT JOIN tool_calls tc ON tc.exchange_id = e.id
+    WHERE e.embedding_version < ?
+    GROUP BY e.id
+    LIMIT ?
+  `).all(EMBEDDING_VERSION, limit);
+}
+function recordReembedded(db, id, embedding) {
+  db.prepare("DELETE FROM vec_exchanges WHERE id = ?").run(id);
+  db.prepare("INSERT INTO vec_exchanges (id, embedding) VALUES (?, ?)").run(id, Buffer.from(new Float32Array(embedding).buffer));
+  db.prepare("UPDATE exchanges SET embedding_version = ? WHERE id = ?").run(EMBEDDING_VERSION, id);
+}
+function countStale(db) {
+  const row = db.prepare(
+    "SELECT COUNT(*) AS c FROM exchanges WHERE embedding_version < ?"
+  ).get(EMBEDDING_VERSION);
+  return row.c;
+}
+function getMigrationLockPath(indexDir) {
+  return path5.join(indexDir, ".embedding-migration.lock");
+}
+async function runMigrationBatch(db, indexDir, batchSize, embedFn) {
+  const remaining = countStale(db);
+  if (remaining === 0) return 0;
+  const lockPath = getMigrationLockPath(indexDir);
+  const lock = acquireFileLock(lockPath);
+  if (!lock) {
+    console.error(`episodic-memory: another process is migrating embeddings (${remaining} rows still stale); skipping`);
+    return 0;
+  }
+  try {
+    const rows = pickStaleBatch(db, batchSize);
+    if (rows.length === 0) return 0;
+    console.error(`episodic-memory: re-embedding batch of ${rows.length} (${remaining} stale total)...`);
+    const embeddings = [];
+    for (const row of rows) {
+      const tools = row.tools ? row.tools.split(",") : void 0;
+      const vec = await embedFn(row.user_message, row.assistant_message, tools);
+      embeddings.push({ id: row.id, vec });
+    }
+    const writeTx = db.transaction((items) => {
+      for (const item of items) recordReembedded(db, item.id, item.vec);
+    });
+    writeTx(embeddings);
+    return embeddings.length;
+  } finally {
+    releaseFileLock(lock);
+  }
+}
+var init_embedding_migration = __esm({
+  "src/embedding-migration.ts"() {
+    "use strict";
+    init_embeddings();
+    init_file_lock();
+  }
+});
+
 // src/stats.ts
 var stats_exports = {};
 __export(stats_exports, {
@@ -7375,6 +7450,12 @@ async function getIndexStats(dbPath) {
       ORDER BY count DESC
       LIMIT 10
     `).all();
+    let staleEmbeddings = 0;
+    try {
+      const { countStale: countStale2 } = await Promise.resolve().then(() => (init_embedding_migration(), embedding_migration_exports));
+      staleEmbeddings = countStale2(db);
+    } catch {
+    }
     return {
       totalConversations: totalConversations.count,
       conversationsWithSummaries: withSummariesCount,
@@ -7385,7 +7466,8 @@ async function getIndexStats(dbPath) {
         latest: dateRange.latest
       } : void 0,
       projectCount: projectCount.count,
-      topProjects
+      topProjects,
+      staleEmbeddings
     };
   } finally {
     db.close();
@@ -7421,6 +7503,20 @@ function formatStats(stats) {
   output += `Unique Projects: ${stats.projectCount.toLocaleString()}
 
 `;
+  if (stats.staleEmbeddings && stats.staleEmbeddings > 0) {
+    output += `Stale Embeddings: ${stats.staleEmbeddings.toLocaleString()} exchange(s) on an old model
+`;
+    output += `  (re-embedded incrementally on each sync)
+
+`;
+  }
+  if (stats.poisonConversations && stats.poisonConversations > 0) {
+    output += `Permanently Skipped: ${stats.poisonConversations.toLocaleString()} conversation(s) after repeated summary failures
+`;
+    output += `  (retry with EPISODIC_MEMORY_RETRY_ALL=1 episodic-memory sync)
+
+`;
+  }
   if (stats.topProjects && stats.topProjects.length > 0) {
     output += `Top Projects by Conversation Count:
 `;
@@ -7963,10 +8059,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path6) {
-  if (!path6)
+function getElementAtPath(obj, path7) {
+  if (!path7)
     return obj;
-  return path6.reduce((acc, key) => acc?.[key], obj);
+  return path7.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -8375,11 +8471,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path6, issues) {
+function prefixIssues(path7, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path6);
+    iss.path.unshift(path7);
     return iss;
   });
 }
@@ -8526,16 +8622,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path6 = []) => {
+  const processError = (error52, path7 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
       } else {
-        const fullpath = [...path6, ...issue2.path];
+        const fullpath = [...path7, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -8562,17 +8658,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path6 = []) => {
+  const processError = (error52, path7 = []) => {
     var _a3, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
       } else {
-        const fullpath = [...path6, ...issue2.path];
+        const fullpath = [...path7, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -8604,8 +8700,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path6 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path6) {
+  const path7 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path7) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -21603,13 +21699,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path6 = ref.slice(1).split("/").filter(Boolean);
-  if (path6.length === 0) {
+  const path7 = ref.slice(1).split("/").filter(Boolean);
+  if (path7.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path6[0] === defsKey) {
-    const key = path6[1];
+  if (path7[0] === defsKey) {
+    const key = path7[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -27283,7 +27379,7 @@ var VERSION = "1.4.14";
 // src/mcp-server.ts
 init_paths();
 import fs6 from "fs";
-import path5 from "path";
+import path6 from "path";
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
@@ -27466,9 +27562,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     if (name === "read") {
       const params = ShowConversationInputSchema.parse(args);
-      const archiveDir = path5.resolve(getArchiveDir());
-      const resolvedPath = path5.resolve(params.path);
-      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path5.sep)) {
+      const archiveDir = path6.resolve(getArchiveDir());
+      const resolvedPath = path6.resolve(params.path);
+      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path6.sep)) {
         throw new Error(`Access denied: path is outside the archive directory`);
       }
       if (!fs6.existsSync(resolvedPath)) {

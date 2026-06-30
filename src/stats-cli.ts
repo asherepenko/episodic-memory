@@ -1,4 +1,5 @@
 import { getIndexStats, formatStats } from './stats.js';
+import { countSyncStates } from './sync/index.js';
 
 const args = process.argv.slice(2);
 
@@ -14,6 +15,7 @@ Shows:
 - Date range coverage
 - Project breakdown
 - Top projects by conversation count
+- Stale embeddings and permanently-skipped (poison) conversations
 
 EXAMPLES:
   # Show index statistics
@@ -24,6 +26,13 @@ EXAMPLES:
 
 getIndexStats()
   .then(stats => {
+    // Poison count is filesystem-derived (archive sidecars), kept out of
+    // getIndexStats so it stays DB-only and isolated under unit tests.
+    try {
+      stats.poisonConversations = countSyncStates().poison;
+    } catch {
+      // archive dir may not exist before the first sync
+    }
     console.log(formatStats(stats));
   })
   .catch(error => {

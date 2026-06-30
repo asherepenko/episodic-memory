@@ -13,6 +13,10 @@ export interface IndexStats {
   projectCount: number;
   topProjects?: Array<{ project: string; count: number }>;
   databaseSize?: string;
+  /** exchanges still on an old embedding model (re-embedded incrementally on sync) */
+  staleEmbeddings?: number;
+  /** conversations permanently skipped after repeated summary failures; populated by the CLI layer */
+  poisonConversations?: number;
 }
 
 export async function getIndexStats(dbPath?: string): Promise<IndexStats> {
@@ -82,6 +86,16 @@ export async function getIndexStats(dbPath?: string): Promise<IndexStats> {
       LIMIT 10
     `).all() as Array<{ project: string; count: number }>;
 
+    // Stale-embedding count (rows on an old encoder). Guarded: minimal/old
+    // schemas may lack the embedding_version column countStale relies on.
+    let staleEmbeddings = 0;
+    try {
+      const { countStale } = await import('./embedding-migration.js');
+      staleEmbeddings = countStale(db);
+    } catch {
+      // column absent on a partial/legacy schema — treat as none stale
+    }
+
     return {
       totalConversations: totalConversations.count,
       conversationsWithSummaries: withSummariesCount,
@@ -93,6 +107,7 @@ export async function getIndexStats(dbPath?: string): Promise<IndexStats> {
       } : undefined,
       projectCount: projectCount.count,
       topProjects,
+      staleEmbeddings,
     };
   } finally {
     db.close();
@@ -122,6 +137,16 @@ export function formatStats(stats: IndexStats): string {
   }
 
   output += `Unique Projects: ${stats.projectCount.toLocaleString()}\n\n`;
+
+  if (stats.staleEmbeddings && stats.staleEmbeddings > 0) {
+    output += `Stale Embeddings: ${stats.staleEmbeddings.toLocaleString()} exchange(s) on an old model\n`;
+    output += `  (re-embedded incrementally on each sync)\n\n`;
+  }
+
+  if (stats.poisonConversations && stats.poisonConversations > 0) {
+    output += `Permanently Skipped: ${stats.poisonConversations.toLocaleString()} conversation(s) after repeated summary failures\n`;
+    output += `  (retry with EPISODIC_MEMORY_RETRY_ALL=1 episodic-memory sync)\n\n`;
+  }
 
   if (stats.topProjects && stats.topProjects.length > 0) {
     output += `Top Projects by Conversation Count:\n`;
