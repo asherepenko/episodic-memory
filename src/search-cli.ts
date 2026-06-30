@@ -11,6 +11,7 @@ let sessionId: string | undefined;
 let gitBranch: string | undefined;
 let limit = 10;
 let minScore: number | undefined;
+let rerank: boolean | undefined;
 const queries: string[] = [];
 
 for (let i = 0; i < args.length; i++) {
@@ -35,6 +36,7 @@ OPTIONS:
   --git-branch BRANCH   Filter by git branch name (exact match)
   --limit N             Max results (default: 10)
   --min-score N         Drop semantic matches below cosine similarity N (0-1)
+  --rerank              Rerank results with a cross-encoder for higher precision
   --help, -h            Show this help
 
 EXAMPLES:
@@ -79,6 +81,8 @@ EXAMPLES:
   } else if (arg === '--min-score') {
     const v = parseFloat(args[++i]);
     if (Number.isFinite(v) && v >= 0 && v <= 1) minScore = v;
+  } else if (arg === '--rerank') {
+    rerank = true;
   } else {
     // All non-flag args are query terms
     queries.push(arg);
@@ -93,7 +97,7 @@ if (queries.length === 0) {
 
 // Multi-concept search if multiple queries provided
 if (queries.length > 1) {
-  const options = { limit, after, before, project, session_id: sessionId, git_branch: gitBranch, minScore };
+  const options = { limit, after, before, project, session_id: sessionId, git_branch: gitBranch, minScore, rerank };
 
   searchMultipleConcepts(queries, options)
     .then(async results => {
@@ -119,6 +123,7 @@ if (queries.length > 1) {
     session_id: sessionId,
     git_branch: gitBranch,
     minScore,
+    rerank,
   };
 
   searchConversations(queries[0], options)

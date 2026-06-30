@@ -9,6 +9,8 @@ export interface SearchOptions {
     git_branch?: string;
     /** drop vector matches below this cosine similarity (0-1); text-only matches are kept */
     minScore?: number;
+    /** rerank a larger candidate pool with a cross-encoder; undefined → EPISODIC_MEMORY_RERANK env */
+    rerank?: boolean;
 }
 /**
  * Convert an L2 (Euclidean) distance from sqlite-vec into a cosine similarity.

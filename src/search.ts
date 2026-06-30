@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { initDatabase } from './db.js';
 import { initEmbeddings, generateQueryEmbedding, EMBEDDER } from './embeddings.js';
 import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
+import { rerankScores, isRerankEnabled } from './reranker.js';
 import fs from 'fs';
 import readline from 'readline';
 
@@ -15,7 +16,12 @@ export interface SearchOptions {
   git_branch?: string;  // exact match against e.git_branch
   /** drop vector matches below this cosine similarity (0-1); text-only matches are kept */
   minScore?: number;
+  /** rerank a larger candidate pool with a cross-encoder; undefined → EPISODIC_MEMORY_RERANK env */
+  rerank?: boolean;
 }
+
+/** Candidate pool size when reranking: retrieve more, rerank, keep top `limit`. */
+const RERANK_POOL = 50;
 
 /**
  * Build the AND-clause and bound-parameter list that constrains a search
@@ -160,6 +166,9 @@ export async function searchConversations(
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
   const { limit = 10, mode = 'both', after, before } = options;
+  const rerankOn = isRerankEnabled(options.rerank);
+  // When reranking, retrieve a larger pool to rerank, then keep the top `limit`.
+  const retrieveLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
@@ -177,7 +186,7 @@ export async function searchConversations(
     // active we ask for more candidates than `limit` and trim afterwards.
     await initEmbeddings();
     const queryEmbedding = await generateQueryEmbedding(query);
-    const k = hasMetadataFilters(options) ? limit * 3 : limit;
+    const k = hasMetadataFilters(options) ? retrieveLimit * 3 : retrieveLimit;
 
     const stmt = db.prepare(`
       SELECT
@@ -198,9 +207,9 @@ export async function searchConversations(
       ...filterParams
     );
     // In 'both' mode keep the full candidate list for rank fusion below; only
-    // trim to `limit` for vector-only mode.
-    if (mode === 'vector' && results.length > limit) {
-      results = results.slice(0, limit);
+    // trim for vector-only mode.
+    if (mode === 'vector' && results.length > retrieveLimit) {
+      results = results.slice(0, retrieveLimit);
     }
   }
 
@@ -218,14 +227,14 @@ export async function searchConversations(
       LIMIT ?
     `);
 
-    const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, limit);
+    const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, retrieveLimit);
 
     if (mode === 'both') {
       // Fuse the vector and text rankings (vector first = higher authority on
       // ties) instead of just appending text matches after every vector hit.
       results = reciprocalRankFusion(
         [results as Array<{ id: string }>, textResults as Array<{ id: string }>],
-        limit,
+        retrieveLimit,
       );
     } else {
       results = textResults;
@@ -260,10 +269,24 @@ export async function searchConversations(
 
   // Drop weak vector matches below the threshold. Text-only matches (no
   // similarity score) are kept — a substring hit is an exact signal.
+  let out = mapped;
   if (options.minScore !== undefined) {
-    return mapped.filter(r => r.similarity === undefined || r.similarity >= options.minScore!);
+    out = out.filter(r => r.similarity === undefined || r.similarity >= options.minScore!);
   }
-  return mapped;
+
+  // Optional cross-encoder rerank over the larger retrieved pool, then keep the
+  // top `limit`. Reorders by joint query/passage relevance; the displayed
+  // similarity stays the (semantic) cosine score.
+  if (rerankOn && out.length > 1) {
+    const passages = out.map(r => `User: ${r.exchange.userMessage}\n\nAssistant: ${r.exchange.assistantMessage}`);
+    const scores = await rerankScores(query, passages);
+    out = out
+      .map((r, i) => ({ r, score: scores[i] ?? -Infinity }))
+      .sort((a, b) => b.score - a.score)
+      .map(x => x.r);
+  }
+
+  return out.slice(0, limit);
 }
 
 // Helper function to count lines in a file efficiently
@@ -404,7 +427,9 @@ export async function searchMultipleConcepts(
 
   // Search for each concept independently
   const conceptResults = await Promise.all(
-    concepts.map(concept => searchConversations(concept, { ...options, limit: limit * 5, mode: 'vector' }))
+    // Reranking is a single-query relevance reorder; multi-concept does its own
+    // AND-merge ranking, so keep each concept search on pure vector retrieval.
+    concepts.map(concept => searchConversations(concept, { ...options, limit: limit * 5, mode: 'vector', rerank: false }))
   );
 
   // Build map of conversation path -> array of results (one per concept)

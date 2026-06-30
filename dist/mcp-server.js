@@ -25439,8 +25439,53 @@ var StdioServerTransport = class {
 // src/search.ts
 init_db();
 init_embeddings();
+
+// src/reranker.ts
+import { AutoModelForSequenceClassification, AutoTokenizer } from "@huggingface/transformers";
+var RERANKER_MODEL_ID = process.env.EPISODIC_MEMORY_RERANK_MODEL ?? "Xenova/bge-reranker-base";
+var RERANKER_DTYPE = "q8";
+var loadPromise = null;
+function load2() {
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      console.error("Loading reranker model (first run may take time)...");
+      const [model, tokenizer] = await Promise.all([
+        AutoModelForSequenceClassification.from_pretrained(RERANKER_MODEL_ID, {
+          dtype: RERANKER_DTYPE,
+          progress_callback: () => {
+          }
+        }),
+        AutoTokenizer.from_pretrained(RERANKER_MODEL_ID)
+      ]);
+      console.error("Reranker model loaded");
+      return { model, tokenizer };
+    })().catch((err) => {
+      loadPromise = null;
+      throw err;
+    });
+  }
+  return loadPromise;
+}
+async function rerankScores(query, passages) {
+  if (passages.length === 0) return [];
+  const { model, tokenizer } = await load2();
+  const inputs = tokenizer(
+    passages.map(() => query),
+    { text_pair: passages, padding: true, truncation: true }
+  );
+  const { logits } = await model(inputs);
+  return Array.from(logits.data, Number);
+}
+function isRerankEnabled(flag) {
+  if (flag !== void 0) return flag;
+  const env2 = process.env.EPISODIC_MEMORY_RERANK;
+  return env2 === "1" || env2 === "true";
+}
+
+// src/search.ts
 import fs5 from "fs";
 import readline from "readline";
+var RERANK_POOL = 50;
 function buildSearchFilters(options) {
   const parts = [];
   const params = [];
@@ -25542,6 +25587,8 @@ function reciprocalRankFusion(lists, limit, k = 60) {
 }
 async function searchConversations(query, options = {}) {
   const { limit = 10, mode = "both", after, before } = options;
+  const rerankOn = isRerankEnabled(options.rerank);
+  const retrieveLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
   if (after) validateISODate(after, "--after");
   if (before) validateISODate(before, "--before");
   const db = initDatabase();
@@ -25550,7 +25597,7 @@ async function searchConversations(query, options = {}) {
   if (mode === "vector" || mode === "both") {
     await initEmbeddings();
     const queryEmbedding = await generateQueryEmbedding(query);
-    const k = hasMetadataFilters(options) ? limit * 3 : limit;
+    const k = hasMetadataFilters(options) ? retrieveLimit * 3 : retrieveLimit;
     const stmt = db.prepare(`
       SELECT
         ${EXCHANGE_SELECT_COLUMNS},
@@ -25568,8 +25615,8 @@ async function searchConversations(query, options = {}) {
       k,
       ...filterParams
     );
-    if (mode === "vector" && results.length > limit) {
-      results = results.slice(0, limit);
+    if (mode === "vector" && results.length > retrieveLimit) {
+      results = results.slice(0, retrieveLimit);
     }
   }
   if (mode === "text" || mode === "both") {
@@ -25584,11 +25631,11 @@ async function searchConversations(query, options = {}) {
       ORDER BY e.timestamp DESC
       LIMIT ?
     `);
-    const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, limit);
+    const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, retrieveLimit);
     if (mode === "both") {
       results = reciprocalRankFusion(
         [results, textResults],
-        limit
+        retrieveLimit
       );
     } else {
       results = textResults;
@@ -25611,10 +25658,18 @@ async function searchConversations(query, options = {}) {
       summary
     };
   });
+  let out = mapped;
   if (options.minScore !== void 0) {
-    return mapped.filter((r) => r.similarity === void 0 || r.similarity >= options.minScore);
+    out = out.filter((r) => r.similarity === void 0 || r.similarity >= options.minScore);
   }
-  return mapped;
+  if (rerankOn && out.length > 1) {
+    const passages = out.map((r) => `User: ${r.exchange.userMessage}
+
+Assistant: ${r.exchange.assistantMessage}`);
+    const scores = await rerankScores(query, passages);
+    out = out.map((r, i) => ({ r, score: scores[i] ?? -Infinity })).sort((a, b2) => b2.score - a.score).map((x2) => x2.r);
+  }
+  return out.slice(0, limit);
 }
 async function countLines(filePath) {
   try {
@@ -25720,7 +25775,9 @@ async function searchMultipleConcepts(concepts, options = {}) {
     return [];
   }
   const conceptResults = await Promise.all(
-    concepts.map((concept) => searchConversations(concept, { ...options, limit: limit * 5, mode: "vector" }))
+    // Reranking is a single-query relevance reorder; multi-concept does its own
+    // AND-merge ranking, so keep each concept search on pure vector retrieval.
+    concepts.map((concept) => searchConversations(concept, { ...options, limit: limit * 5, mode: "vector", rerank: false }))
   );
   const conversationMap = /* @__PURE__ */ new Map();
   conceptResults.forEach((results, conceptIndex) => {
@@ -27445,6 +27502,7 @@ var SearchInputSchema = external_exports.object({
   session_id: external_exports.string().min(1).optional().describe("Filter by session ID (exact match)"),
   git_branch: external_exports.string().min(1).optional().describe("Filter by git branch name (exact match)"),
   min_score: external_exports.number().min(0).max(1).optional().describe("Drop semantic matches below this cosine similarity (0-1). Raises precision; text-only matches are always kept."),
+  rerank: external_exports.boolean().optional().describe("Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a reranker model on first use). Defaults to the EPISODIC_MEMORY_RERANK env switch."),
   response_format: ResponseFormatEnum.default("markdown").describe(
     'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
   )
@@ -27494,6 +27552,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             session_id: { type: "string", minLength: 1, description: "Filter by session ID (exact match)" },
             git_branch: { type: "string", minLength: 1, description: "Filter by git branch name (exact match)" },
             min_score: { type: "number", minimum: 0, maximum: 1, description: "Drop semantic matches below this cosine similarity (0-1); text-only matches are kept" },
+            rerank: { type: "boolean", description: "Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a model on first use)" },
             response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" }
           },
           required: ["query"],
@@ -27545,7 +27604,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           project: params.project,
           session_id: params.session_id,
           git_branch: params.git_branch,
-          minScore: params.min_score
+          minScore: params.min_score,
+          rerank: params.rerank
         };
         const results = await searchMultipleConcepts(params.query, options);
         const hint = results.length === 0 ? await buildEmptyResultHint() : void 0;
@@ -27575,7 +27635,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           project: params.project,
           session_id: params.session_id,
           git_branch: params.git_branch,
-          minScore: params.min_score
+          minScore: params.min_score,
+          rerank: params.rerank
         };
         const results = await searchConversations(params.query, options);
         const hint = results.length === 0 ? await buildEmptyResultHint() : void 0;
