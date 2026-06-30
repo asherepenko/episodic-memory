@@ -465,6 +465,12 @@ npm test
 npm run build
 ```
 
+On a fresh clone, the first `npm test` downloads the embedding and reranker models, which can exceed the default per-test timeouts. Raise the ceiling with `EPISODIC_MEMORY_TEST_TIMEOUT_MS` (it only extends timeouts, never shortens them):
+
+```bash
+EPISODIC_MEMORY_TEST_TIMEOUT_MS=180000 npm test
+```
+
 ## License
 
 MIT
