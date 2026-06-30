@@ -18,7 +18,7 @@ describe('Codex plugin packaging', () => {
     expect(manifest.name).toBe('episodic-memory');
     expect(manifest.version).toBe(readJson('package.json').version);
     expect(manifest.skills).toBe('./skills/');
-    expect(manifest.hooks).toBe('./hooks/hooks.json');
+    expect(manifest.hooks).toBe('./hooks/hooks-codex.json');
     expect(manifest.mcpServers).toBe('./.mcp.json');
     expect(manifest.interface.displayName).toBe('Episodic Memory');
     expect(manifest.interface.shortDescription).toContain('conversation memory');

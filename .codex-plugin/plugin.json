@@ -1,6 +1,6 @@
 {
   "name": "episodic-memory",
-  "version": "1.4.13",
+  "version": "1.4.14",
   "description": "Semantic search for Claude Code and Codex conversations. Remember past discussions, decisions, and patterns.",
   "author": {
     "name": "Andrew Sherepenko",
@@ -17,7 +17,7 @@
     "episodic"
   ],
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
+  "hooks": "./hooks/hooks-codex.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Episodic Memory",

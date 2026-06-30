@@ -27095,7 +27095,7 @@ ${result}
 }
 
 // src/version.ts
-var VERSION = "1.4.13";
+var VERSION = "1.4.14";
 
 // src/mcp-server.ts
 import fs5 from "fs";

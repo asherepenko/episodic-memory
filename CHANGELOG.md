@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.14] - 2026-06-30
+
+### Fixed
+- **The background-sync hook now fires reliably on both Claude Code and Codex, instead of relying on one shared file that had to work for both.** When you start a session, the plugin kicks off an indexing sync in the background so search stays current. That sync is launched by a startup hook, and the hook has to find the plugin's install directory through an environment variable — but the two hosts name it differently (Claude Code sets `CLAUDE_PLUGIN_ROOT`, Codex sets `PLUGIN_ROOT`). The single combined hook file papered over this with a fallback expression and a matcher pattern that only one host understood, so the hook could silently fail to launch on the other. Each host now gets its own hook file using exactly the variable and fields it supports — Claude Code reads the conventional `hooks/hooks.json`, Codex reads a new `hooks/hooks-codex.json` — and both now cap the launch at a 10-second timeout so a slow start can't hang session startup. End result: the startup sync actually runs on whichever host you're using.
+- **A freshly installed plugin now indexes your history in the same session, instead of staying empty until you restart.** On the very first run, the plugin's dependencies may still be installing (the install runs in the background so it never blocks startup). Until now, once that install finished it simply stopped — it never went on to actually index anything — so the first search came up empty and only the *second* session would finally build the index. The background installer now chains straight into an indexing sync the moment dependencies are ready, so a brand-new install becomes searchable within the same session (typically under a minute) rather than requiring a restart.
+
 ## [1.4.13] - 2026-06-10
 
 ### Changed
