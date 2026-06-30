@@ -59,7 +59,10 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModel> = {
   },
 };
 
-const DEFAULT_MODEL_KEY = 'bge-small-en';
+// Multilingual by default: embeds non-English conversations (e.g. Ukrainian)
+// well, where the English-only bge-small fell down. English-only users who want
+// maximum English retrieval quality can set EPISODIC_MEMORY_EMBED_MODEL=bge-small-en.
+const DEFAULT_MODEL_KEY = 'multilingual-e5-small';
 
 /**
  * Resolve which registered model to use. Pure for testability: pass the

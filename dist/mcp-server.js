@@ -6933,7 +6933,7 @@ var init_embeddings = __esm({
         version: 2
       }
     };
-    DEFAULT_MODEL_KEY = "bge-small-en";
+    DEFAULT_MODEL_KEY = "multilingual-e5-small";
     ACTIVE_MODEL = resolveEmbeddingModel(process.env.EPISODIC_MEMORY_EMBED_MODEL);
     MODEL_ID = ACTIVE_MODEL.modelId;
     MODEL_DTYPE = ACTIVE_MODEL.dtype;

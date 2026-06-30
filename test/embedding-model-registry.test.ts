@@ -10,18 +10,25 @@ describe('embedding model registry', () => {
     expect(e5.passagePrefix).toBe('passage: ');
   });
 
-  it('defaults to bge-small-en when no key is given', () => {
+  it('defaults to multilingual-e5-small when no key is given', () => {
     const def = resolveEmbeddingModel(undefined);
-    expect(def.key).toBe('bge-small-en');
-    expect(def.version).toBe(1);
-    expect(def.queryPrefix).toBe(BGE_QUERY_PREFIX);
-    expect(def.passagePrefix).toBe('');
+    expect(def.key).toBe('multilingual-e5-small');
+    expect(def.version).toBe(2);
+    expect(def.queryPrefix).toBe('query: ');
+    expect(def.passagePrefix).toBe('passage: ');
+  });
+
+  it('can still select the English-only bge-small-en explicitly', () => {
+    const bge = resolveEmbeddingModel('bge-small-en');
+    expect(bge.key).toBe('bge-small-en');
+    expect(bge.queryPrefix).toBe(BGE_QUERY_PREFIX);
+    expect(bge.passagePrefix).toBe('');
   });
 
   it('falls back to the default (with a warning) on an unknown key', () => {
     const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
     const result = resolveEmbeddingModel('does-not-exist');
-    expect(result.key).toBe('bge-small-en');
+    expect(result.key).toBe('multilingual-e5-small');
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0][0]).toContain('does-not-exist');
     warn.mockRestore();
