@@ -7,6 +7,8 @@ export interface SearchOptions {
     project?: string;
     session_id?: string;
     git_branch?: string;
+    /** drop vector matches below this cosine similarity (0-1); text-only matches are kept */
+    minScore?: number;
 }
 /**
  * Convert an L2 (Euclidean) distance from sqlite-vec into a cosine similarity.

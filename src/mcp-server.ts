@@ -80,6 +80,12 @@ const SearchInputSchema = z
       .min(1)
       .optional()
       .describe('Filter by git branch name (exact match)'),
+    min_score: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe('Drop semantic matches below this cosine similarity (0-1). Raises precision; text-only matches are always kept.'),
     response_format: ResponseFormatEnum.default('markdown').describe(
       'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
     ),
@@ -158,6 +164,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             project: { type: 'string', minLength: 1, description: 'Filter by project name (exact match)' },
             session_id: { type: 'string', minLength: 1, description: 'Filter by session ID (exact match)' },
             git_branch: { type: 'string', minLength: 1, description: 'Filter by git branch name (exact match)' },
+            min_score: { type: 'number', minimum: 0, maximum: 1, description: 'Drop semantic matches below this cosine similarity (0-1); text-only matches are kept' },
             response_format: { type: 'string', enum: ['markdown', 'json'], default: 'markdown' },
           },
           required: ['query'],
@@ -216,6 +223,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           project: params.project,
           session_id: params.session_id,
           git_branch: params.git_branch,
+          minScore: params.min_score,
         };
 
         const results = await searchMultipleConcepts(params.query, options);
@@ -246,6 +254,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           project: params.project,
           session_id: params.session_id,
           git_branch: params.git_branch,
+          minScore: params.min_score,
         };
 
         const results = await searchConversations(params.query, options);

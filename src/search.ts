@@ -13,6 +13,8 @@ export interface SearchOptions {
   project?: string;     // exact match against e.project
   session_id?: string;  // exact match against e.session_id
   git_branch?: string;  // exact match against e.git_branch
+  /** drop vector matches below this cosine similarity (0-1); text-only matches are kept */
+  minScore?: number;
 }
 
 /**
@@ -203,7 +205,7 @@ export async function searchConversations(
 
   db.close();
 
-  return results.map((row: any) => {
+  const mapped = results.map((row: any) => {
     const exchange = exchangeFromRow(row);
 
     // Load the derived summary if it exists. Error/retry state lives in
@@ -226,6 +228,13 @@ export async function searchConversations(
       summary
     } as SearchResult & { summary?: string };
   });
+
+  // Drop weak vector matches below the threshold. Text-only matches (no
+  // similarity score) are kept — a substring hit is an exact signal.
+  if (options.minScore !== undefined) {
+    return mapped.filter(r => r.similarity === undefined || r.similarity >= options.minScore!);
+  }
+  return mapped;
 }
 
 // Helper function to count lines in a file efficiently

@@ -168,7 +168,7 @@ export async function searchConversations(query, options = {}) {
         }
     }
     db.close();
-    return results.map((row) => {
+    const mapped = results.map((row) => {
         const exchange = exchangeFromRow(row);
         // Load the derived summary if it exists. Error/retry state lives in
         // ConversationSyncState (Poison), not the file, so the file is either a
@@ -188,6 +188,12 @@ export async function searchConversations(query, options = {}) {
             summary
         };
     });
+    // Drop weak vector matches below the threshold. Text-only matches (no
+    // similarity score) are kept — a substring hit is an exact signal.
+    if (options.minScore !== undefined) {
+        return mapped.filter(r => r.similarity === undefined || r.similarity >= options.minScore);
+    }
+    return mapped;
 }
 // Helper function to count lines in a file efficiently
 async function countLines(filePath) {

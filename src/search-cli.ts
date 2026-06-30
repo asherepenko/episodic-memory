@@ -10,6 +10,7 @@ let project: string | undefined;
 let sessionId: string | undefined;
 let gitBranch: string | undefined;
 let limit = 10;
+let minScore: number | undefined;
 const queries: string[] = [];
 
 for (let i = 0; i < args.length; i++) {
@@ -33,6 +34,7 @@ OPTIONS:
   --session-id ID       Filter by session ID (exact match)
   --git-branch BRANCH   Filter by git branch name (exact match)
   --limit N             Max results (default: 10)
+  --min-score N         Drop semantic matches below cosine similarity N (0-1)
   --help, -h            Show this help
 
 EXAMPLES:
@@ -74,6 +76,9 @@ EXAMPLES:
     gitBranch = args[++i];
   } else if (arg === '--limit') {
     limit = parseInt(args[++i]);
+  } else if (arg === '--min-score') {
+    const v = parseFloat(args[++i]);
+    if (Number.isFinite(v) && v >= 0 && v <= 1) minScore = v;
   } else {
     // All non-flag args are query terms
     queries.push(arg);
@@ -88,7 +93,7 @@ if (queries.length === 0) {
 
 // Multi-concept search if multiple queries provided
 if (queries.length > 1) {
-  const options = { limit, after, before, project, session_id: sessionId, git_branch: gitBranch };
+  const options = { limit, after, before, project, session_id: sessionId, git_branch: gitBranch, minScore };
 
   searchMultipleConcepts(queries, options)
     .then(async results => {
@@ -113,6 +118,7 @@ if (queries.length > 1) {
     project,
     session_id: sessionId,
     git_branch: gitBranch,
+    minScore,
   };
 
   searchConversations(queries[0], options)
