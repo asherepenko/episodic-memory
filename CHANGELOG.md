@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-30
+
+### Added
+- **`episodic-memory status` — a one-screen health check.** Episodic memory does its work quietly in the background, which means when something breaks (a database engine that didn't load, a sync that never ran, summaries that keep failing) you'd have no easy way to tell. The new `status` command answers "is this actually working?" at a glance: whether the database engine loaded, whether the index exists, how many conversations and exchanges are indexed, when the last sync ran, how many entries are still being upgraded to the current search model, and how many conversations have been permanently set aside after repeated summary failures. It exits with an error code when the core engine is unhealthy, so you can use it in scripts.
+- **Searches can now filter out weak matches.** Add `--min-score <0-1>` on the command line (or `min_score` via the in-editor search tool) to drop semantic matches below a similarity cutoff — useful when a broad query returns a long tail of loosely-related results. Exact text matches are always kept. For multi-concept searches the cutoff is applied to each concept before combining, so precision improves there too.
+- **Control how many summaries are generated in parallel.** `episodic-memory sync` gained a `--concurrency <1-16>` flag (and honors the `EPISODIC_MEMORY_CONCURRENCY` environment variable) to run several summary generations at once — handy for catching up a large backlog faster. The background startup sync inherits the environment variable, so you can speed it up too; the README documents how, and the trade-off (more parallel calls means more rate-limit pressure).
+- **`stats` now shows two previously-hidden numbers:** how many exchanges are still on an older search model (these upgrade automatically a little at a time on each sync) and how many conversations were permanently skipped after repeated summary failures (with the one-liner to retry them).
+
+### Changed
+- **A search that finds nothing now tells you whether the index is simply still being built.** Right after install, indexing runs in the background and an empty index would return a bare "No results found." — indistinguishable from a real miss. Now, when the index is genuinely empty, search adds a short note pointing you to `episodic-memory status` and `sync`, so a still-warming-up index doesn't look broken.
+
+### Fixed
+- Replaced a deprecated internal buffer call in the sync path with its supported equivalent (no behavior change), keeping the build clean on current Node versions.
+
 ## [1.4.14] - 2026-06-30
 
 ### Fixed

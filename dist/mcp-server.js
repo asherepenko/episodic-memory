@@ -27378,7 +27378,7 @@ ${result}
 }
 
 // src/version.ts
-var VERSION = "1.4.14";
+var VERSION = "1.5.0";
 
 // src/mcp-server.ts
 init_paths();
