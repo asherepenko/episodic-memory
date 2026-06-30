@@ -3,31 +3,58 @@ import { pipeline, env } from '@huggingface/transformers';
 // In MCP, stdout is reserved for JSON-RPC communication.
 env.allowLocalModels = true;
 env.useBrowserCache = false;
-/**
- * Embedding model configuration.
- *
- * Using BAAI's bge-small-en-v1.5 (via Xenova's ONNX export) instead of the
- * older all-MiniLM-L6-v2 — measured +6.34 R@1 on a 17K-corpus retrieval test
- * against real production data. Same 384 dimensions, so vec_exchanges schema
- * is unchanged.
- *
- * BGE models recommend prepending a task prefix to QUERY embeddings only
- * (passages/documents go through unmodified). See `withQueryPrefix` and
- * `generateQueryEmbedding` below.
- */
-const MODEL_ID = 'Xenova/bge-small-en-v1.5';
-const MODEL_DTYPE = 'q8';
 export const BGE_QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
+export const EMBEDDING_MODELS = {
+    'bge-small-en': {
+        key: 'bge-small-en',
+        modelId: 'Xenova/bge-small-en-v1.5',
+        dtype: 'q8',
+        dimensions: 384,
+        queryPrefix: BGE_QUERY_PREFIX,
+        passagePrefix: '',
+        version: 1,
+    },
+    'multilingual-e5-small': {
+        key: 'multilingual-e5-small',
+        modelId: 'Xenova/multilingual-e5-small',
+        dtype: 'q8',
+        dimensions: 384,
+        queryPrefix: 'query: ',
+        passagePrefix: 'passage: ',
+        version: 2,
+    },
+};
+const DEFAULT_MODEL_KEY = 'bge-small-en';
 /**
- * Bump when ANYTHING in the embedding pipeline changes (model, dtype, prefix,
- * pooling, normalization, truncation). This is the single source of truth —
- * `embedding-migration.ts` and `db.ts` import it from here. Bumping triggers
- * automatic re-embedding of stale rows on upgrade (see CLAUDE.md).
- *
- * Co-located with the pipeline it versions so the version and the behavior it
- * describes can never drift into separate files.
+ * Resolve which registered model to use. Pure for testability: pass the
+ * requested key (typically EPISODIC_MEMORY_EMBED_MODEL). An unknown key falls
+ * back to the default with a stderr warning rather than failing the process.
  */
-export const EMBEDDING_VERSION = 1;
+export function resolveEmbeddingModel(requestedKey) {
+    if (requestedKey) {
+        const found = EMBEDDING_MODELS[requestedKey];
+        if (found)
+            return found;
+        console.error(`episodic-memory: unknown EPISODIC_MEMORY_EMBED_MODEL "${requestedKey}"; ` +
+            `using "${DEFAULT_MODEL_KEY}". Known models: ${Object.keys(EMBEDDING_MODELS).join(', ')}`);
+    }
+    return EMBEDDING_MODELS[DEFAULT_MODEL_KEY];
+}
+/**
+ * The active model for this process. Resolved once at module load — the
+ * embedding version must be stable for the lifetime of the process, so the
+ * model is chosen by the environment at startup, not per call.
+ */
+const ACTIVE_MODEL = resolveEmbeddingModel(process.env.EPISODIC_MEMORY_EMBED_MODEL);
+const MODEL_ID = ACTIVE_MODEL.modelId;
+const MODEL_DTYPE = ACTIVE_MODEL.dtype;
+/**
+ * The active embedding pipeline version, stamped into `exchanges.embedding_version`.
+ * Equals the active model's `version`; `embedding-migration.ts` and `db.ts`
+ * import it. Switching models (default change or EPISODIC_MEMORY_EMBED_MODEL)
+ * changes this, marking old rows stale and triggering re-embedding on upgrade.
+ */
+export const EMBEDDING_VERSION = ACTIVE_MODEL.version;
 let embeddingPipeline = null;
 export async function initEmbeddings() {
     if (!embeddingPipeline) {
@@ -65,13 +92,14 @@ export function cosineSimilarity(a, b) {
     return dot;
 }
 /**
- * Prepend the BGE retrieval prefix to a query string. Idempotent: returns
- * the input unchanged if the prefix is already present.
+ * Prepend the active model's query prefix. Idempotent: returns the input
+ * unchanged if the prefix is already present (an empty prefix is a no-op).
  */
 export function withQueryPrefix(query) {
-    if (query.startsWith(BGE_QUERY_PREFIX))
+    const prefix = ACTIVE_MODEL.queryPrefix;
+    if (!prefix || query.startsWith(prefix))
         return query;
-    return BGE_QUERY_PREFIX + query;
+    return prefix + query;
 }
 /**
  * Generate an embedding for a search QUERY. Adds the model-specific prefix
@@ -88,7 +116,8 @@ export async function generateExchangeEmbedding(userMessage, assistantMessage, t
     if (toolNames && toolNames.length > 0) {
         combined += `\n\nTools: ${toolNames.join(', ')}`;
     }
-    return generateEmbedding(combined);
+    // Passage prefix is model-specific (empty for BGE, "passage: " for E5).
+    return generateEmbedding(ACTIVE_MODEL.passagePrefix + combined);
 }
 /**
  * Convert an L2 (Euclidean) distance between two unit-normalized vectors

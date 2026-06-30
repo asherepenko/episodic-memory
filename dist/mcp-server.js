@@ -6850,6 +6850,16 @@ var init_paths = __esm({
 
 // src/embeddings.ts
 import { pipeline, env } from "@huggingface/transformers";
+function resolveEmbeddingModel(requestedKey) {
+  if (requestedKey) {
+    const found = EMBEDDING_MODELS[requestedKey];
+    if (found) return found;
+    console.error(
+      `episodic-memory: unknown EPISODIC_MEMORY_EMBED_MODEL "${requestedKey}"; using "${DEFAULT_MODEL_KEY}". Known models: ${Object.keys(EMBEDDING_MODELS).join(", ")}`
+    );
+  }
+  return EMBEDDING_MODELS[DEFAULT_MODEL_KEY];
+}
 async function initEmbeddings() {
   if (!embeddingPipeline) {
     console.error("Loading embedding model (first run may take time)...");
@@ -6874,8 +6884,9 @@ async function generateEmbedding(text) {
   return Array.from(output.data);
 }
 function withQueryPrefix(query) {
-  if (query.startsWith(BGE_QUERY_PREFIX)) return query;
-  return BGE_QUERY_PREFIX + query;
+  const prefix = ACTIVE_MODEL.queryPrefix;
+  if (!prefix || query.startsWith(prefix)) return query;
+  return prefix + query;
 }
 async function generateQueryEmbedding(query) {
   return generateEmbedding(withQueryPrefix(query));
@@ -6889,22 +6900,44 @@ Assistant: ${assistantMessage}`;
 
 Tools: ${toolNames.join(", ")}`;
   }
-  return generateEmbedding(combined);
+  return generateEmbedding(ACTIVE_MODEL.passagePrefix + combined);
 }
 function distanceToSimilarity(distance) {
   const similarity = 1 - distance * distance / 2;
   return Math.max(-1, Math.min(1, similarity));
 }
-var MODEL_ID, MODEL_DTYPE, BGE_QUERY_PREFIX, EMBEDDING_VERSION, embeddingPipeline, EMBEDDER;
+var BGE_QUERY_PREFIX, EMBEDDING_MODELS, DEFAULT_MODEL_KEY, ACTIVE_MODEL, MODEL_ID, MODEL_DTYPE, EMBEDDING_VERSION, embeddingPipeline, EMBEDDER;
 var init_embeddings = __esm({
   "src/embeddings.ts"() {
     "use strict";
     env.allowLocalModels = true;
     env.useBrowserCache = false;
-    MODEL_ID = "Xenova/bge-small-en-v1.5";
-    MODEL_DTYPE = "q8";
     BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
-    EMBEDDING_VERSION = 1;
+    EMBEDDING_MODELS = {
+      "bge-small-en": {
+        key: "bge-small-en",
+        modelId: "Xenova/bge-small-en-v1.5",
+        dtype: "q8",
+        dimensions: 384,
+        queryPrefix: BGE_QUERY_PREFIX,
+        passagePrefix: "",
+        version: 1
+      },
+      "multilingual-e5-small": {
+        key: "multilingual-e5-small",
+        modelId: "Xenova/multilingual-e5-small",
+        dtype: "q8",
+        dimensions: 384,
+        queryPrefix: "query: ",
+        passagePrefix: "passage: ",
+        version: 2
+      }
+    };
+    DEFAULT_MODEL_KEY = "bge-small-en";
+    ACTIVE_MODEL = resolveEmbeddingModel(process.env.EPISODIC_MEMORY_EMBED_MODEL);
+    MODEL_ID = ACTIVE_MODEL.modelId;
+    MODEL_DTYPE = ACTIVE_MODEL.dtype;
+    EMBEDDING_VERSION = ACTIVE_MODEL.version;
     embeddingPipeline = null;
     EMBEDDER = {
       version: EMBEDDING_VERSION,

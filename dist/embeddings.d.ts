@@ -1,14 +1,47 @@
-export declare const BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
 /**
- * Bump when ANYTHING in the embedding pipeline changes (model, dtype, prefix,
- * pooling, normalization, truncation). This is the single source of truth —
- * `embedding-migration.ts` and `db.ts` import it from here. Bumping triggers
- * automatic re-embedding of stale rows on upgrade (see CLAUDE.md).
+ * Embedding model registry.
  *
- * Co-located with the pipeline it versions so the version and the behavior it
- * describes can never drift into separate files.
+ * Every registered model is 384-dimensional, so the `vec_exchanges` schema
+ * (fixed-width vectors) is valid no matter which one is active — switching
+ * models never requires recreating the vector table.
+ *
+ * Retrieval models use an asymmetric prefix scheme: a QUERY prefix and a
+ * PASSAGE prefix, applied at embed time. BGE puts a long instruction on the
+ * query and nothing on the passage; E5 puts `query:` / `passage:` on each.
+ *
+ * `version` is stamped into `exchanges.embedding_version` per row and must be
+ * UNIQUE per model so that switching models marks every existing row stale and
+ * triggers automatic re-embedding (see `embedding-migration.ts`, CLAUDE.md).
  */
-export declare const EMBEDDING_VERSION = 1;
+/** transformers.js quantization levels we use for embedding models */
+type ModelDtype = 'q8' | 'fp32' | 'fp16' | 'int8' | 'uint8' | 'q4' | 'auto';
+export interface EmbeddingModel {
+    /** selector key for EPISODIC_MEMORY_EMBED_MODEL */
+    key: string;
+    /** Xenova/HF model id loaded by transformers.js */
+    modelId: string;
+    dtype: ModelDtype;
+    dimensions: 384;
+    queryPrefix: string;
+    passagePrefix: string;
+    /** stamped into embedding_version; unique per model */
+    version: number;
+}
+export declare const BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
+export declare const EMBEDDING_MODELS: Record<string, EmbeddingModel>;
+/**
+ * Resolve which registered model to use. Pure for testability: pass the
+ * requested key (typically EPISODIC_MEMORY_EMBED_MODEL). An unknown key falls
+ * back to the default with a stderr warning rather than failing the process.
+ */
+export declare function resolveEmbeddingModel(requestedKey: string | undefined): EmbeddingModel;
+/**
+ * The active embedding pipeline version, stamped into `exchanges.embedding_version`.
+ * Equals the active model's `version`; `embedding-migration.ts` and `db.ts`
+ * import it. Switching models (default change or EPISODIC_MEMORY_EMBED_MODEL)
+ * changes this, marking old rows stale and triggering re-embedding on upgrade.
+ */
+export declare const EMBEDDING_VERSION: number;
 export declare function initEmbeddings(): Promise<void>;
 export declare function generateEmbedding(text: string): Promise<number[]>;
 /**
@@ -19,8 +52,8 @@ export declare function generateEmbedding(text: string): Promise<number[]>;
  */
 export declare function cosineSimilarity(a: number[], b: number[]): number;
 /**
- * Prepend the BGE retrieval prefix to a query string. Idempotent: returns
- * the input unchanged if the prefix is already present.
+ * Prepend the active model's query prefix. Idempotent: returns the input
+ * unchanged if the prefix is already present (an empty prefix is a no-op).
  */
 export declare function withQueryPrefix(query: string): string;
 /**
@@ -56,7 +89,7 @@ declare function distanceToSimilarity(distance: number): number;
  * - `distanceToSimilarity` — sqlite-vec L2 distance -> cosine similarity
  */
 export declare const EMBEDDER: {
-    readonly version: 1;
+    readonly version: number;
     readonly generate: typeof generateExchangeEmbedding;
     readonly generateQuery: typeof generateQueryEmbedding;
     readonly distanceToSimilarity: typeof distanceToSimilarity;
