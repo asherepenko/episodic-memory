@@ -22,7 +22,7 @@
  *   - proper-lockfile: intentionally absent — this fork backs file locks with
  *     Node builtins (see file-lock.ts).
  */
-import { existsSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
@@ -37,6 +37,38 @@ export const REQUIRED_PACKAGES = [
     'better-sqlite3',
     'sqlite-vec',
 ];
+const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
+/** Human-readable marker for a present SDK whose native binary is missing. */
+export const SDK_NATIVE_BINARY_MARKER = `${SDK_PACKAGE} (native CLI binary)`;
+/**
+ * The Claude Agent SDK doesn't contain the CLI binary it talks to — it spawns a
+ * platform-specific native binary shipped as a SEPARATE optional dependency
+ * (e.g. `@anthropic-ai/claude-agent-sdk-darwin-arm64`). `/plugin install` runs
+ * with `--omit=optional`, so the SDK package lands but its binary package does
+ * not: summaries then throw "Native CLI binary for <platform> not found" while
+ * every top-level dependency check passes.
+ *
+ * A correct install always has exactly one sibling `claude-agent-sdk-<platform>`
+ * package under `@anthropic-ai/`, so its total absence flags the gap without us
+ * having to reproduce the SDK's platform→package mapping (incl. linux musl
+ * variants). Only meaningful when the SDK itself is present — otherwise the SDK
+ * is already reported via REQUIRED_PACKAGES and this would double-report.
+ */
+function sdkNativeBinaryMissing(nodeModules) {
+    const scopeDir = join(nodeModules, '@anthropic-ai');
+    if (!existsSync(join(scopeDir, 'claude-agent-sdk', 'package.json'))) {
+        return false;
+    }
+    let entries;
+    try {
+        entries = readdirSync(scopeDir);
+    }
+    catch {
+        return true;
+    }
+    return !entries.some(name => name.startsWith('claude-agent-sdk-') &&
+        existsSync(join(scopeDir, name, 'package.json')));
+}
 /**
  * Return the required packages whose package.json is missing under
  * `<pluginRoot>/node_modules`. Empty array means the install looks complete.
@@ -44,13 +76,22 @@ export const REQUIRED_PACKAGES = [
  * Probing each package's package.json — not just the directory — catches
  * partial extractions where the folder exists but the manifest hasn't been
  * written yet (#95 Bug 1).
+ *
+ * Also probes the SDK's optional native binary (see sdkNativeBinaryMissing):
+ * reporting it as missing lets the self-heal `npm install` — which does NOT
+ * pass `--omit=optional` — pull the right platform binary and restore summaries
+ * for `/plugin install` users on every OS.
  */
 export function findMissingDeps(pluginRoot) {
     const nodeModules = join(pluginRoot, 'node_modules');
     if (!existsSync(nodeModules)) {
         return REQUIRED_PACKAGES.slice();
     }
-    return REQUIRED_PACKAGES.filter(pkg => !existsSync(join(nodeModules, pkg, 'package.json')));
+    const missing = REQUIRED_PACKAGES.filter(pkg => !existsSync(join(nodeModules, pkg, 'package.json')));
+    if (!missing.includes(SDK_PACKAGE) && sdkNativeBinaryMissing(nodeModules)) {
+        missing.push(SDK_NATIVE_BINARY_MARKER);
+    }
+    return missing;
 }
 /**
  * Self-heal a missing/partial install, serialized by a file lock so that

@@ -162,11 +162,20 @@ export async function repairIndex(issues: VerificationResult): Promise<void> {
         continue;
       }
 
-      // Generate/update summary
+      // Generate/update summary. This is best-effort: it calls the Claude
+      // Agent SDK, which can fail independently of indexing (missing API key,
+      // or a missing native CLI binary under `/plugin install --omit=optional`).
+      // Embeddings are local and need no SDK, so a summary failure must not
+      // block indexing — mirror the indexer, which records the failure and
+      // moves on. Otherwise verify --repair re-indexes nothing on every run.
       const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
-      const summary = await summarizeConversation(exchanges);
-      fs.writeFileSync(summaryPath, summary, 'utf-8');
-      console.log(`  Created summary: ${summary.split(/\s+/).length} words`);
+      try {
+        const summary = await summarizeConversation(exchanges);
+        fs.writeFileSync(summaryPath, summary, 'utf-8');
+        console.log(`  Created summary: ${summary.split(/\s+/).length} words`);
+      } catch (error) {
+        console.log(`  Summary failed (indexing anyway): ${error instanceof Error ? error.message : String(error)}`);
+      }
 
       // Index exchanges
       for (const exchange of exchanges) {

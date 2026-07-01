@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] - 2026-07-01
+
+### Fixed
+- **Summaries work again after `/plugin install`.** The summarizer runs a small Claude Code helper that lives in a platform-specific package installed separately from the main SDK. The plugin installer skips those "optional" packages, so on a plugin install the helper was silently missing — summaries failed with `Native CLI binary for <platform> not found`, and the health check didn't notice because the main SDK was present. The dependency check now detects the missing platform helper and lets the existing self-repair install pull it in on the next run, restoring summaries automatically on every OS. No action needed.
+- **`verify --repair` no longer aborts a conversation when its summary can't be generated.** Indexing and search run entirely on local embeddings and never needed the summarizer, but a summary error used to abort the whole re-index of that conversation — so a missing summarizer meant nothing got re-indexed and every run printed a stack trace per file. Summary generation is now best-effort: if it fails, the conversation is still indexed and searchable, with a one-line note instead of a crash.
+
 ## [1.5.2] - 2026-07-01
 
 ### Changed
