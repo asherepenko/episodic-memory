@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { parseConversation } from './parser.js';
 import { initDatabase, getAllExchanges, getFileLastIndexed } from './db.js';
-import { getArchiveDir, getExcludedProjects, findJsonlFiles } from './paths.js';
+import { getArchiveDir, getExcludedProjects, findJsonlFiles, entryIsDirectory } from './paths.js';
 export async function verifyIndex() {
     const result = {
         missing: [],
@@ -23,7 +23,7 @@ export async function verifyIndex() {
     const excludedDirSet = new Set(excludedProjects);
     let totalChecked = 0;
     for (const projectEntry of fs.readdirSync(archiveDir, { withFileTypes: true })) {
-        if (!projectEntry.isDirectory())
+        if (!entryIsDirectory(archiveDir, projectEntry))
             continue;
         const project = projectEntry.name;
         if (excludedProjects.includes(project)) {

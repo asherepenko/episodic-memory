@@ -1,3 +1,4 @@
+import fs from 'fs';
 /**
  * Get the Claude Code configuration directory.
  * Supports CLAUDE_CONFIG_DIR for multiple profiles.
@@ -18,6 +19,23 @@ export declare function getCodexDir(): string;
  */
 export declare function getConversationSourceDirs(): string[];
 /**
+ * True when a readdir entry is — or points to — a directory.
+ *
+ * `Dirent.isDirectory()` is false for a symlink even when it targets a
+ * directory, so a plain check silently skips symlinked project dirs. That's
+ * common when `~/.claude/projects` (or the archive) is symlinked into a
+ * dotfiles repo. We resolve the link with a guarded `statSync` (follows the
+ * link); a broken or cyclic link throws and is treated as "not a directory"
+ * rather than crashing the walk.
+ */
+export declare function entryIsDirectory(parent: string, entry: fs.Dirent): boolean;
+/**
+ * True when a readdir entry is a `.jsonl` file — or a symlink to one. Same
+ * symlink caveat as {@link entryIsDirectory}: a symlinked transcript would be
+ * missed by a bare `Dirent.isFile()`.
+ */
+export declare function entryIsJsonlFile(parent: string, entry: fs.Dirent): boolean;
+/**
  * Recursively find all .jsonl files under a directory.
  * Returns paths relative to the given directory.
  *
@@ -25,8 +43,12 @@ export declare function getConversationSourceDirs(): string[];
  * the set, at any depth. Top-level project skipping at the caller is the
  * usual case; this parameter handles nested directories like `subagents/`
  * inside session UUIDs (#80).
+ *
+ * Symlinked files and directories are followed (see entryIsDirectory /
+ * entryIsJsonlFile). A `seen` set of resolved real paths guards against
+ * symlink cycles causing infinite recursion.
  */
-export declare function findJsonlFiles(dir: string, excludedDirNames?: ReadonlySet<string>): string[];
+export declare function findJsonlFiles(dir: string, excludedDirNames?: ReadonlySet<string>, seen?: Set<string>): string[];
 /**
  * Get the personal superpowers directory
  *

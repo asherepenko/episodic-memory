@@ -83,9 +83,10 @@ test/
 - **Database**: `~/.config/superpowers/conversation-index/db.sqlite`
 
 ### Directory Walking
-- Use `fs.readdirSync({withFileTypes: true})` + `Dirent.isDirectory()` only
-- Never use `fs.statSync()` — breaks with git worktree symlinks
-- Applied in: `paths.ts#findJsonlFiles()`, `sync.ts`, `indexer.ts`
+- Use `fs.readdirSync({withFileTypes: true})`, then the symlink-aware helpers `entryIsDirectory(parent, entry)` / `entryIsJsonlFile(parent, entry)` from `paths.ts` — **not** a bare `Dirent.isDirectory()`/`isFile()`, which return false for symlinks and silently skip symlinked project dirs and transcripts (common when `~/.claude/projects` or the archive is symlinked into a dotfiles repo).
+- The helpers resolve symlink entries with a **guarded** `fs.statSync()` (try/catch → treat broken/cyclic links as "not a dir/file"). Never call a bare `fs.statSync()` that can throw on a bad worktree symlink and crash the walk — that's what the guard prevents.
+- `findJsonlFiles()` follows symlinked dirs and is cycle-safe via a `seen` set of `realpathSync` paths.
+- Applied in: `paths.ts#findJsonlFiles()`, `indexer.ts` (all project-entry loops), `verify.ts`.
 
 ### Test Environment
 - Real SQLite only (no mocks); creates temp DB per test

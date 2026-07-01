@@ -50,6 +50,42 @@ export function getConversationSourceDirs(): string[] {
 }
 
 /**
+ * True when a readdir entry is — or points to — a directory.
+ *
+ * `Dirent.isDirectory()` is false for a symlink even when it targets a
+ * directory, so a plain check silently skips symlinked project dirs. That's
+ * common when `~/.claude/projects` (or the archive) is symlinked into a
+ * dotfiles repo. We resolve the link with a guarded `statSync` (follows the
+ * link); a broken or cyclic link throws and is treated as "not a directory"
+ * rather than crashing the walk.
+ */
+export function entryIsDirectory(parent: string, entry: fs.Dirent): boolean {
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return fs.statSync(path.join(parent, entry.name)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when a readdir entry is a `.jsonl` file — or a symlink to one. Same
+ * symlink caveat as {@link entryIsDirectory}: a symlinked transcript would be
+ * missed by a bare `Dirent.isFile()`.
+ */
+export function entryIsJsonlFile(parent: string, entry: fs.Dirent): boolean {
+  if (!entry.name.endsWith('.jsonl')) return false;
+  if (entry.isFile()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return fs.statSync(path.join(parent, entry.name)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Recursively find all .jsonl files under a directory.
  * Returns paths relative to the given directory.
  *
@@ -57,18 +93,36 @@ export function getConversationSourceDirs(): string[] {
  * the set, at any depth. Top-level project skipping at the caller is the
  * usual case; this parameter handles nested directories like `subagents/`
  * inside session UUIDs (#80).
+ *
+ * Symlinked files and directories are followed (see entryIsDirectory /
+ * entryIsJsonlFile). A `seen` set of resolved real paths guards against
+ * symlink cycles causing infinite recursion.
  */
-export function findJsonlFiles(dir: string, excludedDirNames?: ReadonlySet<string>): string[] {
+export function findJsonlFiles(
+  dir: string,
+  excludedDirNames?: ReadonlySet<string>,
+  seen?: Set<string>
+): string[] {
   const results: string[] = [];
+  const visited = seen ?? new Set<string>();
+  // Resolve the real path so a symlink cycle (a → b → a) can't recurse forever.
+  let real: string;
+  try {
+    real = fs.realpathSync(dir);
+  } catch {
+    return results;
+  }
+  if (visited.has(real)) return results;
+  visited.add(real);
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      if (entryIsJsonlFile(dir, entry)) {
         results.push(entry.name);
-      } else if (entry.isDirectory()) {
+      } else if (entryIsDirectory(dir, entry)) {
         if (excludedDirNames?.has(entry.name)) continue;
         const subDir = path.join(dir, entry.name);
-        for (const f of findJsonlFiles(subDir, excludedDirNames)) {
+        for (const f of findJsonlFiles(subDir, excludedDirNames, visited)) {
           results.push(path.join(entry.name, f));
         }
       }

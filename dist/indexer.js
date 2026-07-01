@@ -4,7 +4,7 @@ import { initDatabase, insertExchange } from './db.js';
 import { parseConversation } from './parser.js';
 import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
-import { getArchiveDir, getExcludedProjects, getConversationSourceDirs, findJsonlFiles } from './paths.js';
+import { getArchiveDir, getExcludedProjects, getConversationSourceDirs, findJsonlFiles, entryIsDirectory } from './paths.js';
 import { openConversationSyncStateStore, isRetriable, } from './sync/conversation-sync-state.js';
 /**
  * Queue decision for the indexer path, driven by ConversationSyncState.
@@ -38,7 +38,7 @@ export function scanIndexScope(sourceDirs, excludedDirSet, limitToProject) {
             continue;
         }
         for (const entry of entries) {
-            if (!entry.isDirectory())
+            if (!entryIsDirectory(sourceDir, entry))
                 continue;
             if (excludedDirSet.has(entry.name))
                 continue;
@@ -109,7 +109,7 @@ export async function indexConversations(limitToProject, maxConversations, concu
     }
     for (const sourceDir of sourceDirs) {
         for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-            if (!projectEntry.isDirectory())
+            if (!entryIsDirectory(sourceDir, projectEntry))
                 continue;
             const project = projectEntry.name;
             // Skip excluded projects
@@ -223,7 +223,7 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
     let found = false;
     for (const sourceDir of sourceDirs) {
         for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-            if (!projectEntry.isDirectory())
+            if (!entryIsDirectory(sourceDir, projectEntry))
                 continue;
             const project = projectEntry.name;
             if (excludedProjects.includes(project))
@@ -301,10 +301,16 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
     const excludedProjects = getExcludedProjects();
     const excludedDirSet = new Set(excludedProjects);
     const unprocessed = [];
+    // Scanning parses every source transcript to find exchanges past the
+    // high-water mark, which is silent and slow across thousands of files.
+    // Emit periodic progress so the run never looks hung (be responsive).
+    let scanned = 0;
+    const SCAN_PROGRESS_EVERY = 200;
+    console.log('Scanning conversations for new exchanges...');
     // Collect all unprocessed conversations from all source dirs
     for (const sourceDir of sourceDirs) {
         for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-            if (!projectEntry.isDirectory())
+            if (!entryIsDirectory(sourceDir, projectEntry))
                 continue;
             const project = projectEntry.name;
             if (excludedProjects.includes(project))
@@ -312,6 +318,10 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
             const projectPath = path.join(sourceDir, project);
             const files = findJsonlFiles(projectPath, excludedDirSet);
             for (const file of files) {
+                scanned++;
+                if (scanned % SCAN_PROGRESS_EVERY === 0) {
+                    console.log(`  Scanned ${scanned} conversations (${unprocessed.length} with new exchanges)...`);
+                }
                 const sourcePath = path.join(projectPath, file);
                 const projectArchive = path.join(ARCHIVE_DIR, project);
                 const archivePath = path.join(projectArchive, file);
@@ -338,12 +348,13 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
             }
         }
     } // end sourceDir loop
+    console.log(`Scan complete: checked ${scanned} conversation(s).`);
     if (unprocessed.length === 0) {
-        console.log('✅ All conversations are already processed!');
+        console.log('✅ Nothing to do — all conversations are already indexed.');
         db.close();
         return;
     }
-    console.log(`Found ${unprocessed.length} unprocessed conversations`);
+    console.log(`Found ${unprocessed.length} unprocessed conversation(s).`);
     // Batch process summaries (unless --no-summaries)
     if (!noSummaries) {
         const needsSummary = unprocessed.filter(c => shouldQueueForSummaryState(store.load(c.archivePath)));

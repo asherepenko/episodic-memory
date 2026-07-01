@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.4] - 2026-07-01
+
+### Fixed
+- **Symlinked transcript folders are no longer skipped.** If your `~/.claude/projects` (or the conversation archive) is a symlink — common when it's kept in a dotfiles repo — the directory walk used to silently ignore symlinked project folders and transcript files, so those conversations never got indexed. The walk now follows symlinks (files and directories) and is protected against symlink loops.
+
+### Changed
+- **`index --cleanup` shows progress instead of looking frozen.** Scanning thousands of conversations for new content is slow and used to run completely silently after "Embedding model loaded", so it looked hung. It now prints `Scanning conversations…`, a running count every 200 conversations (`Scanned 400 conversations (3 with new exchanges)…`), a `Scan complete: checked N` line, and a clear `Nothing to do — all conversations are already indexed.` when there's nothing new.
+
 ## [1.5.3] - 2026-07-01
 
 ### Fixed

@@ -6,7 +6,7 @@ import { parseConversation } from './parser.js';
 import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
 import { ConversationExchange } from './types.js';
-import { getArchiveDir, getExcludedProjects, getConversationSourceDirs, findJsonlFiles } from './paths.js';
+import { getArchiveDir, getExcludedProjects, getConversationSourceDirs, findJsonlFiles, entryIsDirectory } from './paths.js';
 import {
   openConversationSyncStateStore,
   isRetriable,
@@ -53,7 +53,7 @@ export function scanIndexScope(
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      if (!entryIsDirectory(sourceDir, entry)) continue;
       if (excludedDirSet.has(entry.name)) continue;
       if (limitToProject && entry.name !== limitToProject) continue;
       const files = findJsonlFiles(path.join(sourceDir, entry.name), excludedDirSet);
@@ -143,7 +143,7 @@ export async function indexConversations(
 
   for (const sourceDir of sourceDirs) {
   for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-    if (!projectEntry.isDirectory()) continue;
+    if (!entryIsDirectory(sourceDir, projectEntry)) continue;
     const project = projectEntry.name;
 
     // Skip excluded projects
@@ -289,7 +289,7 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
 
   for (const sourceDir of sourceDirs) {
   for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-    if (!projectEntry.isDirectory()) continue;
+    if (!entryIsDirectory(sourceDir, projectEntry)) continue;
     const project = projectEntry.name;
     if (excludedProjects.includes(project)) continue;
 
@@ -392,10 +392,17 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
 
   const unprocessed: UnprocessedConv[] = [];
 
+  // Scanning parses every source transcript to find exchanges past the
+  // high-water mark, which is silent and slow across thousands of files.
+  // Emit periodic progress so the run never looks hung (be responsive).
+  let scanned = 0;
+  const SCAN_PROGRESS_EVERY = 200;
+  console.log('Scanning conversations for new exchanges...');
+
   // Collect all unprocessed conversations from all source dirs
   for (const sourceDir of sourceDirs) {
   for (const projectEntry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-    if (!projectEntry.isDirectory()) continue;
+    if (!entryIsDirectory(sourceDir, projectEntry)) continue;
     const project = projectEntry.name;
     if (excludedProjects.includes(project)) continue;
 
@@ -404,6 +411,10 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
     const files = findJsonlFiles(projectPath, excludedDirSet);
 
     for (const file of files) {
+      scanned++;
+      if (scanned % SCAN_PROGRESS_EVERY === 0) {
+        console.log(`  Scanned ${scanned} conversations (${unprocessed.length} with new exchanges)...`);
+      }
       const sourcePath = path.join(projectPath, file);
       const projectArchive = path.join(ARCHIVE_DIR, project);
       const archivePath = path.join(projectArchive, file);
@@ -437,13 +448,15 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
   }
   } // end sourceDir loop
 
+  console.log(`Scan complete: checked ${scanned} conversation(s).`);
+
   if (unprocessed.length === 0) {
-    console.log('✅ All conversations are already processed!');
+    console.log('✅ Nothing to do — all conversations are already indexed.');
     db.close();
     return;
   }
 
-  console.log(`Found ${unprocessed.length} unprocessed conversations`);
+  console.log(`Found ${unprocessed.length} unprocessed conversation(s).`);
 
   // Batch process summaries (unless --no-summaries)
   if (!noSummaries) {

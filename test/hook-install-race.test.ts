@@ -106,6 +106,10 @@ describe('SessionStart hook install-race tolerance', () => {
     for (const pkg of REQUIRED_PACKAGES) {
       plantPackage(pkg);
     }
+    // A complete install also has the SDK's platform-specific native binary
+    // package (a sibling of claude-agent-sdk). findMissingDeps flags its
+    // absence (v1.5.3), so plant one or the shim would treat deps as missing.
+    plantPackage(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`);
 
     const result = spawnSync(
       process.execPath,
