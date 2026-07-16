@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.5] - 2026-07-16
+
+### Fixed
+- **Plugin works again on Intel Macs.** The embedding backend (`@huggingface/transformers`) had been bumped to `^4.2.0`, which pulls `onnxruntime-node@1.24.3` — the first ONNX Runtime release to drop the macOS x64 prebuilt binary (Intel-mac binaries exist only through `1.23.2`). On an Intel Mac the MCP server crashed at startup with `Cannot find module '../bin/napi-v6/darwin/x64/onnxruntime_binding.node'`, so Claude Code reported `Failed to reconnect to episodic-memory: -32000` and no memory tools loaded. Pinned `@huggingface/transformers` to `^3.7.6`, which depends on `onnxruntime-node@1.21.0` — still shipping both `darwin/x64` and `darwin/arm64` binaries. Apple Silicon is unaffected, and the embedding model (`Xenova/multilingual-e5-small`, `dtype: q8`) is unchanged, so retrieval quality and existing embeddings stay identical.
+
 ## [1.5.4] - 2026-07-01
 
 ### Fixed
