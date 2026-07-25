@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.6] - 2026-07-26
+
+### Added
+- **Visible progress for long-running index and sync commands.** Foreground commands now show a terminal spinner; sync also reports which Conversation source it is processing. Non-interactive output receives clear start and completion lines instead.
+
+### Fixed
+- **Fresh plugin activations install all required native binaries.** The dependency bootstrap now explicitly includes optional packages, which prevents plugin-manager defaults from omitting the platform-specific Claude SDK and SQLite binaries.
+
+### Changed
+- **Updated direct dependencies to their latest compatible versions.** This includes the current Claude Agent SDK, `better-sqlite3` 13, Node 26 type definitions, and TypeScript 7 while retaining the Intel Mac-compatible transformers pin.
+- **Migrated TypeScript module resolution to `bundler`.** TypeScript 7 removed the legacy `node`/`node10` resolver; the new setting preserves the package's existing ES module output.
+
 ## [1.5.5] - 2026-07-16
 
 ### Fixed

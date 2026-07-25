@@ -66,6 +66,13 @@ The plugin automatically:
 - Exposes MCP tools for searching and viewing conversations
 - Makes your conversation history searchable via natural language
 
+Plugin managers copy the plugin bundle but do not run npm lifecycle scripts at
+download time. On the plugin's automatic MCP activation, episodic-memory
+installs its runtime dependencies with optional packages explicitly enabled;
+this includes the platform-native Claude SDK and SQLite binaries. No manual
+`npm install` or first command invocation is required. The first activation can
+take roughly 30–60 seconds while the dependencies are downloaded.
+
 ### As a Codex plugin
 
 This repository includes a Codex plugin manifest at `.codex-plugin/plugin.json`.

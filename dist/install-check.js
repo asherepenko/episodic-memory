@@ -27,6 +27,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 const INSTALL_LOCK = '.episodic-memory-install.lock';
+export const INSTALL_ARGS = ['install', '--no-audit', '--no-fund', '--include=optional'];
 /** Cross-platform synchronous sleep (no busy-wait), for lock-wait polling. */
 function sleepSync(ms) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -120,7 +121,10 @@ export function installDepsSync(pluginRoot) {
         const isWindows = process.platform === 'win32';
         const npmBin = isWindows ? 'npm.cmd' : 'npm';
         process.stderr.write('episodic-memory: installing dependencies (first run only, ~30-60s)...\n');
-        const result = spawnSync(npmBin, ['install', '--no-audit', '--no-fund'], {
+        // Plugin managers may set npm_config_omit=optional while materializing a
+        // plugin. Explicitly include optionals because both the Claude Agent SDK
+        // and native SQLite packages ship platform binaries through that channel.
+        const result = spawnSync(npmBin, INSTALL_ARGS, {
             cwd: pluginRoot,
             stdio: ['ignore', 'inherit', 'inherit'],
             shell: isWindows,

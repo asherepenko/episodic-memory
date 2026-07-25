@@ -1,3 +1,4 @@
+export declare const INSTALL_ARGS: string[];
 export declare const REQUIRED_PACKAGES: string[];
 /** Human-readable marker for a present SDK whose native binary is missing. */
 export declare const SDK_NATIVE_BINARY_MARKER = "@anthropic-ai/claude-agent-sdk (native CLI binary)";

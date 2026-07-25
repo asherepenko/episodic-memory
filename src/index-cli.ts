@@ -5,6 +5,7 @@ import { initDatabase } from './db.js';
 import { getDbPath, getArchiveDir } from './paths.js';
 import fs from 'fs';
 import path from 'path';
+import { createProgressIndicator } from './progress.js';
 
 const command = process.argv[2];
 
@@ -26,6 +27,19 @@ function getNoSummaries(): boolean {
 const concurrency = getConcurrency();
 const noSummaries = getNoSummaries();
 
+async function withProgress<T>(label: string, work: () => Promise<T>): Promise<T> {
+  const progress = createProgressIndicator(label);
+  progress.start();
+  try {
+    const result = await work();
+    progress.complete(`${label} complete`);
+    return result;
+  } catch (error) {
+    progress.complete(`${label} failed`);
+    throw error;
+  }
+}
+
 async function main() {
   try {
     switch (command) {
@@ -35,11 +49,11 @@ async function main() {
           console.error('Usage: index-cli index-session <session-id>');
           process.exit(1);
         }
-        await indexSession(sessionId, concurrency, noSummaries);
+        await withProgress('Indexing session', () => indexSession(sessionId, concurrency, noSummaries));
         break;
 
       case 'index-cleanup':
-        await indexUnprocessed(concurrency, noSummaries);
+        await withProgress('Indexing unprocessed conversations', () => indexUnprocessed(concurrency, noSummaries));
         break;
 
       case 'verify':
@@ -104,12 +118,12 @@ async function main() {
 
         // Re-index everything
         console.log('Re-indexing all conversations...');
-        await indexConversations(undefined, undefined, concurrency, noSummaries);
+        await withProgress('Re-indexing conversations', () => indexConversations(undefined, undefined, concurrency, noSummaries));
         break;
 
       case 'index-all':
       default:
-        await indexConversations(undefined, undefined, concurrency, noSummaries);
+        await withProgress('Indexing conversations', () => indexConversations(undefined, undefined, concurrency, noSummaries));
         break;
     }
   } catch (error) {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { findMissingDeps, REQUIRED_PACKAGES, SDK_NATIVE_BINARY_MARKER } from '../src/install-check.js';
+import { findMissingDeps, REQUIRED_PACKAGES, SDK_NATIVE_BINARY_MARKER, INSTALL_ARGS } from '../src/install-check.js';
 
 // Stage a fake <pluginRoot>/node_modules and assert what findMissingDeps
 // reports. The SDK native-binary probe is the reason this exists: `/plugin
@@ -61,5 +61,11 @@ describe('findMissingDeps', () => {
     stageAllRequired();
     stagePackage('@anthropic-ai/claude-agent-sdk-linux-x64-musl');
     expect(findMissingDeps(pluginRoot)).toEqual([]);
+  });
+});
+
+describe('dependency installer arguments', () => {
+  it('forces optional dependencies to install so platform-native SDK binaries are present', () => {
+    expect(INSTALL_ARGS).toContain('--include=optional');
   });
 });

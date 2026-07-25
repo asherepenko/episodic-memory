@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { formatLogLine, getSyncLogPath } from './logging.js';
 import { acquireFileLock, readLockHolder, releaseFileLock } from './file-lock.js';
+import { createProgressIndicator } from './progress.js';
 const args = process.argv.slice(2);
 // Reentrancy guard (#87): if this sync was triggered by a SessionStart hook
 // inside a Claude subprocess that the summarizer just spawned, exit silently.
@@ -154,13 +155,28 @@ console.log(`Destination: ${destDir}`);
 console.log(`Log: ${getLogPath()} (tail -f for live progress)\n`);
 async function syncAll() {
     const totals = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [], sourcesWithSummaryWork: 0, totalNeedingSummaries: 0 };
-    for (const sourceDir of sourceDirs) {
-        const result = await syncConversations(sourceDir, destDir, { summaryLimit, concurrency });
-        totals.copied += result.copied;
-        totals.skipped += result.skipped;
-        totals.indexed += result.indexed;
-        totals.summarized += result.summarized;
-        totals.errors.push(...result.errors);
+    const progress = createProgressIndicator('Syncing conversations');
+    progress.start();
+    try {
+        for (const [index, sourceDir] of sourceDirs.entries()) {
+            progress.update(`Syncing source ${index + 1}/${sourceDirs.length}`);
+            const result = await syncConversations(sourceDir, destDir, { summaryLimit, concurrency });
+            totals.copied += result.copied;
+            totals.skipped += result.skipped;
+            totals.indexed += result.indexed;
+            totals.summarized += result.summarized;
+            totals.errors.push(...result.errors);
+        }
+        // After regular sync, do a batch of embedding migration if any rows are
+        // still on the old encoder. Lock-protected; if another process is already
+        // migrating, this is a no-op.
+        progress.update('Updating embeddings');
+        await runEmbeddingMigrationPhase();
+        progress.complete('Sync complete');
+    }
+    catch (error) {
+        progress.complete('Sync failed');
+        throw error;
     }
     console.log(`\n✅ Sync complete!`);
     console.log(`  Copied: ${totals.copied}`);
@@ -177,10 +193,6 @@ async function syncAll() {
             console.log(`  Check your API configuration (EPISODIC_MEMORY_API_BASE_URL / ANTHROPIC_API_KEY).`);
         }
     }
-    // After regular sync, do a batch of embedding migration if any rows are
-    // still on the old encoder. Lock-protected; if another process is already
-    // migrating, this is a no-op.
-    await runEmbeddingMigrationPhase();
 }
 const MIGRATION_BATCH_SIZE = parseInt(process.env.EPISODIC_MEMORY_MIGRATION_BATCH || '500', 10);
 async function runEmbeddingMigrationPhase() {
