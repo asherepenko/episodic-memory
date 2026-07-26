@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fresh plugin activations install all required native binaries.** The dependency bootstrap now explicitly includes optional packages, which prevents plugin-manager defaults from omitting the platform-specific Claude SDK and SQLite binaries.
 
 ### Changed
-- **Updated direct dependencies to their latest compatible versions.** This includes the current Claude Agent SDK, `better-sqlite3` 13, Node 26 type definitions, and TypeScript 7 while retaining the Intel Mac-compatible transformers pin.
+- **Updated direct dependencies to their latest compatible versions.** This includes the current Claude Agent SDK, `better-sqlite3` 13, Node 26 type definitions, and TypeScript 7.
+- **Separated Apple Silicon and Intel Mac embedding runtimes.** Apple Silicon uses Transformers 4.2 with ONNX Runtime 1.24.3; Intel Macs keep Transformers 3.7.6 with ONNX Runtime 1.21.0, which still ships a macOS x64 binary. Each runtime now has an isolated model cache.
 - **Migrated TypeScript module resolution to `bundler`.** TypeScript 7 removed the legacy `node`/`node10` resolver; the new setting preserves the package's existing ES module output.
 
 ## [1.5.5] - 2026-07-16

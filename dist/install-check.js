@@ -34,7 +34,8 @@ function sleepSync(ms) {
 }
 export const REQUIRED_PACKAGES = [
     '@anthropic-ai/claude-agent-sdk',
-    '@huggingface/transformers',
+    '@huggingface/transformers-darwin-arm64',
+    '@huggingface/transformers-darwin-x64',
     'better-sqlite3',
     'sqlite-vec',
 ];

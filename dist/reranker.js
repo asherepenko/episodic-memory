@@ -1,4 +1,4 @@
-import { AutoModelForSequenceClassification, AutoTokenizer } from '@huggingface/transformers';
+import { loadTransformers } from './transformers-runtime.js';
 /**
  * Optional cross-encoder reranking stage.
  *
@@ -19,6 +19,7 @@ function load() {
     if (!loadPromise) {
         loadPromise = (async () => {
             console.error('Loading reranker model (first run may take time)...');
+            const { AutoModelForSequenceClassification, AutoTokenizer } = await loadTransformers();
             const [model, tokenizer] = await Promise.all([
                 AutoModelForSequenceClassification.from_pretrained(RERANKER_MODEL_ID, {
                     dtype: RERANKER_DTYPE,

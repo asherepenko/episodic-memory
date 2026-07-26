@@ -1,8 +1,4 @@
-import { pipeline, env } from '@huggingface/transformers';
-// Disable progress callbacks to prevent stdout pollution in MCP context
-// In MCP, stdout is reserved for JSON-RPC communication.
-env.allowLocalModels = true;
-env.useBrowserCache = false;
+import { getTransformersCacheDir, loadTransformers } from './transformers-runtime.js';
 export const BGE_QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
 export const EMBEDDING_MODELS = {
     'bge-small-en': {
@@ -59,10 +55,21 @@ const MODEL_DTYPE = ACTIVE_MODEL.dtype;
  */
 export const EMBEDDING_VERSION = ACTIVE_MODEL.version;
 let embeddingPipeline = null;
+// transformers.js 3 exposes `pipeline` through a deeply-distributive generic
+// overload. TypeScript 7 exceeds its union-complexity limit when contextual
+// typing the known feature-extraction call below, so keep the public runtime
+// contract at this narrow boundary instead.
 export async function initEmbeddings() {
     if (!embeddingPipeline) {
         console.error('Loading embedding model (first run may take time)...');
-        embeddingPipeline = await pipeline('feature-extraction', MODEL_ID, { dtype: MODEL_DTYPE, progress_callback: () => { } });
+        const { pipeline, env } = await loadTransformers();
+        // Keep model files outside node_modules, and isolate transformer major
+        // versions so an Intel cache is never reused by the Apple Silicon runtime.
+        env.allowLocalModels = true;
+        env.useBrowserCache = false;
+        env.cacheDir = getTransformersCacheDir();
+        const createFeatureExtractionPipeline = pipeline;
+        embeddingPipeline = await createFeatureExtractionPipeline('feature-extraction', MODEL_ID, { dtype: MODEL_DTYPE, progress_callback: () => { } });
         console.error('Embedding model loaded');
     }
 }

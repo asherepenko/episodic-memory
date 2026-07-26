@@ -9,5 +9,8 @@ export default defineConfig({
     // EPISODIC_MEMORY_TEST_TIMEOUT_MS for cold-cache / first-install runs
     // where model downloads dominate (see test/test-utils.ts#testTimeoutMs).
     testTimeout: Math.max(Number(process.env.EPISODIC_MEMORY_TEST_TIMEOUT_MS) || 0, 30000),
+    // Native ONNX sessions are memory-heavy. Parallel test files create many
+    // independent sessions and make otherwise passing embedding tests time out.
+    fileParallelism: false,
   },
 });

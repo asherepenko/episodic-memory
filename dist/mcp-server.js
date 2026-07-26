@@ -2881,20 +2881,20 @@ var require_compile = __commonJS({
     var util_1 = require_util();
     var validate_1 = require_validate();
     var SchemaEnv = class {
-      constructor(env2) {
+      constructor(env) {
         var _a3;
         this.refs = {};
         this.dynamicAnchors = {};
         let schema;
-        if (typeof env2.schema == "object")
-          schema = env2.schema;
-        this.schema = env2.schema;
-        this.schemaId = env2.schemaId;
-        this.root = env2.root || this;
-        this.baseId = (_a3 = env2.baseId) !== null && _a3 !== void 0 ? _a3 : (0, resolve_1.normalizeId)(schema === null || schema === void 0 ? void 0 : schema[env2.schemaId || "$id"]);
-        this.schemaPath = env2.schemaPath;
-        this.localRefs = env2.localRefs;
-        this.meta = env2.meta;
+        if (typeof env.schema == "object")
+          schema = env.schema;
+        this.schema = env.schema;
+        this.schemaId = env.schemaId;
+        this.root = env.root || this;
+        this.baseId = (_a3 = env.baseId) !== null && _a3 !== void 0 ? _a3 : (0, resolve_1.normalizeId)(schema === null || schema === void 0 ? void 0 : schema[env.schemaId || "$id"]);
+        this.schemaPath = env.schemaPath;
+        this.localRefs = env.localRefs;
+        this.meta = env.meta;
         this.$async = schema === null || schema === void 0 ? void 0 : schema.$async;
         this.refs = {};
       }
@@ -3078,15 +3078,15 @@ var require_compile = __commonJS({
           baseId = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, schId);
         }
       }
-      let env2;
+      let env;
       if (typeof schema != "boolean" && schema.$ref && !(0, util_1.schemaHasRulesButRef)(schema, this.RULES)) {
         const $ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, schema.$ref);
-        env2 = resolveSchema.call(this, root, $ref);
+        env = resolveSchema.call(this, root, $ref);
       }
       const { schemaId } = this.opts;
-      env2 = env2 || new SchemaEnv({ schema, schemaId, root, baseId });
-      if (env2.schema !== env2.root.schema)
-        return env2;
+      env = env || new SchemaEnv({ schema, schemaId, root, baseId });
+      if (env.schema !== env.root.schema)
+        return env;
       return void 0;
     }
   }
@@ -3234,8 +3234,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path7) {
-      let input = path7;
+    function removeDotSegments(path8) {
+      let input = path8;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3434,8 +3434,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path7, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path7 && path7 !== "/" ? path7 : void 0;
+        const [path8, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path8 && path8 !== "/" ? path8 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -4487,8 +4487,8 @@ var require_ref = __commonJS({
       schemaType: "string",
       code(cxt) {
         const { gen, schema: $ref, it: it2 } = cxt;
-        const { baseId, schemaEnv: env2, validateName, opts, self } = it2;
-        const { root } = env2;
+        const { baseId, schemaEnv: env, validateName, opts, self } = it2;
+        const { root } = env;
         if (($ref === "#" || $ref === "#/") && baseId === root.baseId)
           return callRootRef();
         const schOrEnv = compile_1.resolveRef.call(self, root, baseId, $ref);
@@ -4498,8 +4498,8 @@ var require_ref = __commonJS({
           return callValidate(schOrEnv);
         return inlineRefSchema(schOrEnv);
         function callRootRef() {
-          if (env2 === root)
-            return callRef(cxt, validateName, env2, env2.$async);
+          if (env === root)
+            return callRef(cxt, validateName, env, env.$async);
           const rootName = gen.scopeValue("root", { ref: root });
           return callRef(cxt, (0, codegen_1._)`${rootName}.validate`, root, root.$async);
         }
@@ -4529,14 +4529,14 @@ var require_ref = __commonJS({
     exports.getValidate = getValidate;
     function callRef(cxt, v2, sch, $async) {
       const { gen, it: it2 } = cxt;
-      const { allErrors, schemaEnv: env2, opts } = it2;
+      const { allErrors, schemaEnv: env, opts } = it2;
       const passCxt = opts.passContext ? names_1.default.this : codegen_1.nil;
       if ($async)
         callAsyncRef();
       else
         callSyncRef();
       function callAsyncRef() {
-        if (!env2.$async)
+        if (!env.$async)
           throw new Error("async schema referenced by sync schema");
         const valid = gen.let("valid");
         gen.try(() => {
@@ -6857,8 +6857,32 @@ var init_paths = __esm({
   }
 });
 
+// src/transformers-runtime.ts
+import os2 from "node:os";
+import path2 from "node:path";
+function selectTransformersPackage(platform = process.platform, arch = process.arch) {
+  return platform === "darwin" && arch === "x64" ? INTEL_MAC_TRANSFORMERS : CURRENT_TRANSFORMERS;
+}
+function transformersCacheKey(platform = process.platform, arch = process.arch) {
+  return selectTransformersPackage(platform, arch) === INTEL_MAC_TRANSFORMERS ? "transformers-v3" : "transformers-v4";
+}
+function getTransformersCacheDir() {
+  const cacheHome = process.env.XDG_CACHE_HOME ?? path2.join(os2.homedir(), ".cache");
+  return path2.join(cacheHome, "episodic-memory", transformersCacheKey());
+}
+async function loadTransformers() {
+  return import(selectTransformersPackage());
+}
+var INTEL_MAC_TRANSFORMERS, CURRENT_TRANSFORMERS;
+var init_transformers_runtime = __esm({
+  "src/transformers-runtime.ts"() {
+    "use strict";
+    INTEL_MAC_TRANSFORMERS = "@huggingface/transformers-darwin-x64";
+    CURRENT_TRANSFORMERS = "@huggingface/transformers-darwin-arm64";
+  }
+});
+
 // src/embeddings.ts
-import { pipeline, env } from "@huggingface/transformers";
 function resolveEmbeddingModel(requestedKey) {
   if (requestedKey) {
     const found = EMBEDDING_MODELS[requestedKey];
@@ -6872,7 +6896,12 @@ function resolveEmbeddingModel(requestedKey) {
 async function initEmbeddings() {
   if (!embeddingPipeline) {
     console.error("Loading embedding model (first run may take time)...");
-    embeddingPipeline = await pipeline(
+    const { pipeline, env } = await loadTransformers();
+    env.allowLocalModels = true;
+    env.useBrowserCache = false;
+    env.cacheDir = getTransformersCacheDir();
+    const createFeatureExtractionPipeline = pipeline;
+    embeddingPipeline = await createFeatureExtractionPipeline(
       "feature-extraction",
       MODEL_ID,
       { dtype: MODEL_DTYPE, progress_callback: () => {
@@ -6919,8 +6948,7 @@ var BGE_QUERY_PREFIX, EMBEDDING_MODELS, DEFAULT_MODEL_KEY, ACTIVE_MODEL, MODEL_I
 var init_embeddings = __esm({
   "src/embeddings.ts"() {
     "use strict";
-    env.allowLocalModels = true;
-    env.useBrowserCache = false;
+    init_transformers_runtime();
     BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
     EMBEDDING_MODELS = {
       "bge-small-en": {
@@ -6959,7 +6987,7 @@ var init_embeddings = __esm({
 
 // src/file-lock.ts
 import fs2 from "fs";
-import path2 from "path";
+import path3 from "path";
 import { execFileSync } from "child_process";
 function isProcessAlive(pid) {
   try {
@@ -7037,7 +7065,7 @@ function holderStillValid(record2) {
   return true;
 }
 function acquireFileLock(lockPath) {
-  fs2.mkdirSync(path2.dirname(lockPath), { recursive: true });
+  fs2.mkdirSync(path3.dirname(lockPath), { recursive: true });
   try {
     const fd = fs2.openSync(lockPath, "wx");
     writeLockRecord(fd);
@@ -7080,7 +7108,7 @@ var init_file_lock = __esm({
 });
 
 // src/native-binding.ts
-import path3 from "path";
+import path4 from "path";
 import { spawnSync } from "child_process";
 import { createRequire } from "module";
 import Database from "better-sqlite3";
@@ -7102,9 +7130,9 @@ function bindingUsable() {
 function betterSqlite3InstallRoot() {
   try {
     const pkgJson = require2.resolve("better-sqlite3/package.json");
-    const pkgDir = path3.dirname(pkgJson);
-    const nodeModules = path3.dirname(pkgDir);
-    return path3.dirname(nodeModules);
+    const pkgDir = path4.dirname(pkgJson);
+    const nodeModules = path4.dirname(pkgDir);
+    return path4.dirname(nodeModules);
   } catch {
     return null;
   }
@@ -7133,7 +7161,7 @@ function healNativeBinding() {
   healAttempted = true;
   const installRoot = betterSqlite3InstallRoot();
   if (!installRoot) return;
-  const lockPath = path3.join(installRoot, ".episodic-native-rebuild.lock");
+  const lockPath = path4.join(installRoot, ".episodic-native-rebuild.lock");
   const lock = acquireFileLock(lockPath);
   if (!lock) {
     console.error("episodic-memory: another process is rebuilding the native binding; waiting...");
@@ -7164,7 +7192,7 @@ var init_native_binding = __esm({
 
 // src/db.ts
 import Database2 from "better-sqlite3";
-import path4 from "path";
+import path5 from "path";
 import fs3 from "fs";
 import * as sqliteVec from "sqlite-vec";
 function openDatabase(dbPath, options) {
@@ -7255,7 +7283,7 @@ function migrateToolCallsCascade(db) {
 }
 function initDatabase() {
   const dbPath = getDbPath();
-  const dbDir = path4.dirname(dbPath);
+  const dbDir = path5.dirname(dbPath);
   if (!fs3.existsSync(dbDir)) {
     fs3.mkdirSync(dbDir, { recursive: true });
   }
@@ -7376,7 +7404,7 @@ __export(embedding_migration_exports, {
   recordReembedded: () => recordReembedded,
   runMigrationBatch: () => runMigrationBatch
 });
-import path5 from "path";
+import path6 from "path";
 function pickStaleBatch(db, limit) {
   return db.prepare(`
     SELECT
@@ -7403,7 +7431,7 @@ function countStale(db) {
   return row.c;
 }
 function getMigrationLockPath(indexDir) {
-  return path5.join(indexDir, ".embedding-migration.lock");
+  return path6.join(indexDir, ".embedding-migration.lock");
 }
 async function runMigrationBatch(db, indexDir, batchSize, embedFn) {
   const remaining = countStale(db);
@@ -8101,10 +8129,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path7) {
-  if (!path7)
+function getElementAtPath(obj, path8) {
+  if (!path8)
     return obj;
-  return path7.reduce((acc, key) => acc?.[key], obj);
+  return path8.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -8513,11 +8541,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path7, issues) {
+function prefixIssues(path8, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path7);
+    iss.path.unshift(path8);
     return iss;
   });
 }
@@ -8664,16 +8692,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path7 = []) => {
+  const processError = (error52, path8 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -8700,17 +8728,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path7 = []) => {
+  const processError = (error52, path8 = []) => {
     var _a3, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -8742,8 +8770,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path7 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path7) {
+  const path8 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path8) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -21741,13 +21769,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path7 = ref.slice(1).split("/").filter(Boolean);
-  if (path7.length === 0) {
+  const path8 = ref.slice(1).split("/").filter(Boolean);
+  if (path8.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path7[0] === defsKey) {
-    const key = path7[1];
+  if (path8[0] === defsKey) {
+    const key = path8[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -25450,7 +25478,7 @@ init_db();
 init_embeddings();
 
 // src/reranker.ts
-import { AutoModelForSequenceClassification, AutoTokenizer } from "@huggingface/transformers";
+init_transformers_runtime();
 var RERANKER_MODEL_ID = process.env.EPISODIC_MEMORY_RERANK_MODEL ?? "Xenova/bge-reranker-base";
 var RERANKER_DTYPE = "q8";
 var loadPromise = null;
@@ -25458,6 +25486,7 @@ function load2() {
   if (!loadPromise) {
     loadPromise = (async () => {
       console.error("Loading reranker model (first run may take time)...");
+      const { AutoModelForSequenceClassification, AutoTokenizer } = await loadTransformers();
       const [model, tokenizer] = await Promise.all([
         AutoModelForSequenceClassification.from_pretrained(RERANKER_MODEL_ID, {
           dtype: RERANKER_DTYPE,
@@ -25487,8 +25516,8 @@ async function rerankScores(query, passages) {
 }
 function isRerankEnabled(flag) {
   if (flag !== void 0) return flag;
-  const env2 = process.env.EPISODIC_MEMORY_RERANK;
-  return env2 === "1" || env2 === "true";
+  const env = process.env.EPISODIC_MEMORY_RERANK;
+  return env === "1" || env === "true";
 }
 
 // src/search.ts
@@ -27488,12 +27517,12 @@ ${result}
 }
 
 // src/version.ts
-var VERSION = "1.5.5";
+var VERSION = "1.5.6";
 
 // src/mcp-server.ts
 init_paths();
 import fs6 from "fs";
-import path6 from "path";
+import path7 from "path";
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
@@ -27684,9 +27713,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     if (name === "read") {
       const params = ShowConversationInputSchema.parse(args);
-      const archiveDir = path6.resolve(getArchiveDir());
-      const resolvedPath = path6.resolve(params.path);
-      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path6.sep)) {
+      const archiveDir = path7.resolve(getArchiveDir());
+      const resolvedPath = path7.resolve(params.path);
+      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path7.sep)) {
         throw new Error(`Access denied: path is outside the archive directory`);
       }
       if (!fs6.existsSync(resolvedPath)) {
