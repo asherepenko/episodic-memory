@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getIndexDir } from './paths.js';
+import { writeProgressAwareLine } from './progress.js';
 /**
  * Structured logger that writes to both stderr and a log file under the index dir.
  *
@@ -35,20 +36,23 @@ function write(level, msg) {
 export const log = {
     info(msg) {
         write('info', msg);
-        console.log(msg);
+        writeProgressAwareLine(msg, () => console.log(msg));
     },
     warn(msg) {
         write('warn', msg);
-        console.log(`⚠️  ${msg}`);
+        const line = `⚠️  ${msg}`;
+        writeProgressAwareLine(line, () => console.log(line));
     },
     error(msg) {
         write('error', msg);
-        console.error(`❌ ${msg}`);
+        const line = `❌ ${msg}`;
+        writeProgressAwareLine(line, () => console.error(line));
     },
     debug(msg) {
         write('debug', msg);
         if (process.env.EPISODIC_MEMORY_DEBUG) {
-            console.error(`🔍 ${msg}`);
+            const line = `🔍 ${msg}`;
+            writeProgressAwareLine(line, () => console.error(line));
         }
     },
 };

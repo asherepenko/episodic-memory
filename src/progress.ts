@@ -5,6 +5,22 @@ export interface ProgressOutput {
 
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const FRAME_INTERVAL_MS = 120;
+const CLEAR_LINE = '\r\u001b[2K';
+
+interface ActiveProgress {
+  writeLine(message: string): void;
+}
+
+let activeProgress: ActiveProgress | undefined;
+
+/** Write a terminal line without corrupting an active spinner row. */
+export function writeProgressAwareLine(message: string, fallback: () => void): void {
+  if (activeProgress) {
+    activeProgress.writeLine(message);
+    return;
+  }
+  fallback();
+}
 
 export interface ProgressIndicator {
   start(): void;
@@ -23,7 +39,14 @@ export function createProgressIndicator(label: string, output: ProgressOutput = 
   let running = false;
 
   const render = () => {
-    output.write(`\r${currentLabel} ${FRAMES[frame]}`);
+    output.write(`${CLEAR_LINE}${currentLabel} ${FRAMES[frame]}`);
+  };
+
+  const coordinator: ActiveProgress = {
+    writeLine(message) {
+      output.write(`${CLEAR_LINE}${message}\n`);
+      render();
+    },
   };
 
   return {
@@ -34,6 +57,7 @@ export function createProgressIndicator(label: string, output: ProgressOutput = 
         output.write(`${currentLabel}...\n`);
         return;
       }
+      activeProgress = coordinator;
       render();
       timer = setInterval(() => {
         frame = (frame + 1) % FRAMES.length;
@@ -49,7 +73,8 @@ export function createProgressIndicator(label: string, output: ProgressOutput = 
       if (!running) return;
       running = false;
       if (timer) clearInterval(timer);
-      output.write(output.isTTY ? `\r${label}\n` : `${label}\n`);
+      if (activeProgress === coordinator) activeProgress = undefined;
+      output.write(output.isTTY ? `${CLEAR_LINE}${label}\n` : `${label}\n`);
     },
   };
 }

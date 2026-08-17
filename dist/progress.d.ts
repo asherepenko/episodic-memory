@@ -2,6 +2,8 @@ export interface ProgressOutput {
     isTTY?: boolean;
     write(message: string): unknown;
 }
+/** Write a terminal line without corrupting an active spinner row. */
+export declare function writeProgressAwareLine(message: string, fallback: () => void): void;
 export interface ProgressIndicator {
     start(): void;
     update(label: string): void;

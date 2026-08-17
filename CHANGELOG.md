@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.7] - 2026-08-17
+
+### Fixed
+- **Sync progress no longer corrupts concurrent status output.** Foreground sync now clears and redraws its spinner around log lines, keeping embedding and summarization progress readable and preventing stale label fragments such as `Sync completeddings` at completion. Non-interactive output is unchanged.
+- **Codex-native summaries work with paginated sessions.** Ephemeral `thread/fork` requests now exclude the inline turn payload as required by current Codex app-server versions, avoiding the `ephemeral paginated thread/fork requires excludeTurns: true` warning and unnecessary fallback to Claude.
+
 ## [1.5.6] - 2026-07-26
 
 ### Added
