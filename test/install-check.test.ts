@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { findMissingDeps, REQUIRED_PACKAGES, SDK_NATIVE_BINARY_MARKER, INSTALL_ARGS } from '../src/install-check.js';
@@ -9,6 +9,11 @@ import { findMissingDeps, REQUIRED_PACKAGES, SDK_NATIVE_BINARY_MARKER, INSTALL_A
 // install` lands the SDK package but omits its platform binary package, and
 // that gap must be detected so the self-heal install can fix it.
 describe('findMissingDeps', () => {
+  const currentNativePackage = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
+  const currentNativeBinary = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const wrongNativePackage = process.platform === 'darwin' && process.arch === 'arm64'
+    ? '@anthropic-ai/claude-agent-sdk-darwin-x64'
+    : '@anthropic-ai/claude-agent-sdk-darwin-arm64';
   let pluginRoot: string;
   let nodeModules: string;
 
@@ -27,6 +32,14 @@ describe('findMissingDeps', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name }));
   }
 
+  function stageNativePackage(root: string, name: string) {
+    const dir = join(root, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, exports: {} }));
+    writeFileSync(join(dir, currentNativeBinary), '');
+    chmodSync(join(dir, currentNativeBinary), 0o755);
+  }
+
   function stageAllRequired() {
     for (const pkg of REQUIRED_PACKAGES) stagePackage(pkg);
   }
@@ -37,7 +50,17 @@ describe('findMissingDeps', () => {
 
   it('reports nothing on a complete install (incl. SDK platform binary)', () => {
     stageAllRequired();
-    stagePackage('@anthropic-ai/claude-agent-sdk-darwin-arm64');
+    stageNativePackage(nodeModules, currentNativePackage);
+    expect(findMissingDeps(pluginRoot)).toEqual([]);
+  });
+
+  it('accepts an executable platform binary nested under the SDK package', () => {
+    stageAllRequired();
+    stageNativePackage(
+      join(nodeModules, '@anthropic-ai/claude-agent-sdk/node_modules'),
+      currentNativePackage,
+    );
+
     expect(findMissingDeps(pluginRoot)).toEqual([]);
   });
 
@@ -45,6 +68,13 @@ describe('findMissingDeps', () => {
     stageAllRequired(); // SDK package present, no claude-agent-sdk-<platform> sibling
     const missing = findMissingDeps(pluginRoot);
     expect(missing).toContain(SDK_NATIVE_BINARY_MARKER);
+  });
+
+  it('flags a matching platform package whose executable is missing', () => {
+    stageAllRequired();
+    stagePackage(currentNativePackage);
+
+    expect(findMissingDeps(pluginRoot)).toContain(SDK_NATIVE_BINARY_MARKER);
   });
 
   it('does not double-report the binary when the SDK package itself is missing', () => {
@@ -57,10 +87,11 @@ describe('findMissingDeps', () => {
     expect(missing).not.toContain(SDK_NATIVE_BINARY_MARKER);
   });
 
-  it('accepts any platform binary variant (e.g. linux musl)', () => {
+  it('does not accept a native binary for a different platform', () => {
     stageAllRequired();
-    stagePackage('@anthropic-ai/claude-agent-sdk-linux-x64-musl');
-    expect(findMissingDeps(pluginRoot)).toEqual([]);
+    stageNativePackage(nodeModules, wrongNativePackage);
+
+    expect(findMissingDeps(pluginRoot)).toContain(SDK_NATIVE_BINARY_MARKER);
   });
 });
 

@@ -22,7 +22,8 @@
  *   - proper-lockfile: intentionally absent — this fork backs file locks with
  *     Node builtins (see file-lock.ts).
  */
-import { existsSync, readdirSync } from 'fs';
+import { accessSync, constants, existsSync } from 'fs';
+import { createRequire } from 'module';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
@@ -56,28 +57,48 @@ export const SDK_NATIVE_BINARY_MARKER = `${SDK_PACKAGE} (native CLI binary)`;
  * not: summaries then throw "Native CLI binary for <platform> not found" while
  * every top-level dependency check passes.
  *
- * A correct install always has exactly one sibling `claude-agent-sdk-<platform>`
- * package under `@anthropic-ai/`, so its total absence flags the gap without us
- * having to reproduce the SDK's platform→package mapping (incl. linux musl
- * variants). Only meaningful when the SDK itself is present — otherwise the SDK
- * is already reported via REQUIRED_PACKAGES and this would double-report.
+ * npm may hoist the platform package beside the SDK or keep it nested under the
+ * SDK's own node_modules. Resolve from the SDK first, then probe both filesystem
+ * layouts in case package exports block subpath resolution. Only meaningful when
+ * the SDK itself is present — otherwise the SDK is already reported via
+ * REQUIRED_PACKAGES and this would double-report.
  */
 function sdkNativeBinaryMissing(nodeModules: string): boolean {
-  const scopeDir = join(nodeModules, '@anthropic-ai');
-  if (!existsSync(join(scopeDir, 'claude-agent-sdk', 'package.json'))) {
+  const sdkDir = join(nodeModules, SDK_PACKAGE);
+  const sdkPackageJson = join(sdkDir, 'package.json');
+  if (!existsSync(sdkPackageJson)) {
     return false;
   }
-  let entries: string[];
-  try {
-    entries = readdirSync(scopeDir);
-  } catch {
-    return true;
+
+  const platformBase = `${SDK_PACKAGE}-${process.platform}-${process.arch}`;
+  const packageNames = process.platform === 'linux'
+    ? [platformBase, `${platformBase}-musl`]
+    : [platformBase];
+  const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const requireFromSdk = createRequire(sdkPackageJson);
+
+  for (const packageName of packageNames) {
+    const candidates: string[] = [];
+    try {
+      candidates.push(requireFromSdk.resolve(`${packageName}/${binaryName}`));
+    } catch {
+      // Package exports may reject direct subpath resolution; probe known npm layouts below.
+    }
+    candidates.push(
+      join(sdkDir, 'node_modules', packageName, binaryName),
+      join(nodeModules, packageName, binaryName),
+    );
+
+    for (const candidate of candidates) {
+      try {
+        accessSync(candidate, constants.X_OK);
+        return false;
+      } catch {
+        // Missing, inaccessible, or non-executable: continue to the next valid layout.
+      }
+    }
   }
-  return !entries.some(
-    name =>
-      name.startsWith('claude-agent-sdk-') &&
-      existsSync(join(scopeDir, name, 'package.json'))
-  );
+  return true;
 }
 
 /**

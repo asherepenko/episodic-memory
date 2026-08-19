@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8] - 2026-08-19
+
+### Fixed
+- **Codex MCP startup recognizes npm's valid nested Claude Agent SDK platform binary.** Dependency validation now resolves the current-platform executable from nested or hoisted installs instead of falsely reporting it missing, avoiding a failed repair loop and closed MCP initialize handshake.
+
 ## [1.5.7] - 2026-08-17
 
 ### Fixed

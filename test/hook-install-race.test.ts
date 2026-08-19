@@ -25,6 +25,13 @@ describe('SessionStart hook install-race tolerance', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: pkg }));
   }
 
+  function plantNativePackage(pkg: string): void {
+    plantPackage(pkg);
+    const binary = join(stageDir, 'node_modules', pkg, process.platform === 'win32' ? 'claude.exe' : 'claude');
+    writeFileSync(binary, '');
+    chmodSync(binary, 0o755);
+  }
+
   beforeEach(() => {
     // Build a synthetic plugin root that mirrors the install layout but with
     // an empty node_modules — simulating npm install mid-flight.
@@ -106,10 +113,9 @@ describe('SessionStart hook install-race tolerance', () => {
     for (const pkg of REQUIRED_PACKAGES) {
       plantPackage(pkg);
     }
-    // A complete install also has the SDK's platform-specific native binary
-    // package (a sibling of claude-agent-sdk). findMissingDeps flags its
-    // absence (v1.5.3), so plant one or the shim would treat deps as missing.
-    plantPackage(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`);
+    // A complete install has an executable in the current-platform SDK package;
+    // a manifest alone is correctly treated as a partial install.
+    plantNativePackage(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`);
 
     const result = spawnSync(
       process.execPath,
