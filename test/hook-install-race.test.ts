@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'child_process';
-import { mkdtempSync, mkdirSync, copyFileSync, rmSync, writeFileSync, chmodSync } from 'fs';
+import { mkdtempSync, mkdirSync, copyFileSync, existsSync, rmSync, writeFileSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -44,6 +44,8 @@ describe('SessionStart hook install-race tolerance', () => {
     // Copy the real shim under test plus the install-check module it imports.
     copyFileSync(join(REPO_ROOT, 'cli', 'episodic-memory.mjs'), join(stageDir, 'cli', 'episodic-memory.mjs'));
     chmodSync(join(stageDir, 'cli', 'episodic-memory.mjs'), 0o755);
+    // The shim statically imports its sibling integrity module; stage it too.
+    copyFileSync(join(REPO_ROOT, 'cli', 'repair.mjs'), join(stageDir, 'cli', 'repair.mjs'));
     copyFileSync(join(REPO_ROOT, 'dist', 'install-check.js'), join(stageDir, 'dist', 'install-check.js'));
     // install-check imports file-lock at load; stage it so the shim's import chain resolves.
     copyFileSync(join(REPO_ROOT, 'dist', 'file-lock.js'), join(stageDir, 'dist', 'file-lock.js'));
@@ -86,6 +88,27 @@ describe('SessionStart hook install-race tolerance', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('');
     expect(result.stderr).toBe('');
+  });
+
+  // The stage dir is itself an incomplete install (no hooks/, no host
+  // manifest). Plugin-file repair logs to stderr and may clone over the
+  // network, so the SessionStart hook must not trigger it — the MCP server and
+  // foreground commands heal instead.
+  it('does not run plugin-file repair on the background hook path', () => {
+    const source = join(stageDir, 'repair-source');
+    mkdirSync(join(source, 'hooks'), { recursive: true });
+    writeFileSync(join(source, 'hooks', 'hooks.json'), '{}');
+
+    const result = spawnSync(
+      process.execPath,
+      [join(stageDir, 'cli', 'episodic-memory.mjs'), 'sync', '--background'],
+      { encoding: 'utf-8', env: { ...process.env, EPISODIC_MEMORY_REPAIR_SOURCE: source } }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    // Nothing was copied in: repair never ran.
+    expect(existsSync(join(stageDir, 'hooks', 'hooks.json'))).toBe(false);
   });
 
   it('attempts self-heal (does not silently skip) for foreground commands with missing deps', () => {

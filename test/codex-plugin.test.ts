@@ -19,16 +19,16 @@ describe('Codex plugin packaging', () => {
     expect(manifest.version).toBe(readJson('package.json').version);
     expect(manifest.skills).toBe('./skills/');
     expect(manifest.hooks).toBe('./hooks/hooks-codex.json');
-    expect(manifest.mcpServers).toBe('./.mcp.json');
+    expect(manifest.mcpServers).toBe('./.codex-plugin/mcp.json');
     expect(manifest.interface.displayName).toBe('Episodic Memory');
     expect(manifest.interface.shortDescription).toContain('conversation memory');
   });
 
   it('defines a relative MCP server command for Codex', () => {
-    const mcpPath = join(REPO_ROOT, '.mcp.json');
+    const mcpPath = join(REPO_ROOT, '.codex-plugin/mcp.json');
     expect(existsSync(mcpPath)).toBe(true);
 
-    const mcp = readJson('.mcp.json');
+    const mcp = readJson('.codex-plugin/mcp.json');
     expect(mcp).toEqual({
       mcpServers: {
         'episodic-memory': {

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.9] - 2026-08-27
+
+### Fixed
+- **The MCP server no longer fails to connect after an incomplete plugin install.** Claude Code and Codex need the server's path written differently, and both were reading it from one shared file at the repo root. When an install finished only partway and left that file as the only config Claude Code could find, it looked for the server at the wrong place and gave up — retrying a 10-second timeout on every session with `Cannot find module '/cli/mcp-server.mjs'`. Each editor now gets its own config file, so neither can pick up the other's.
+
+### Added
+- **The plugin repairs a half-finished install by itself.** An interrupted `/plugin install` can leave a version folder missing whole directories while looking installed. The plugin now checks its own files every time it starts and restores anything missing from the copy the install came from — quietly, and without touching files you have already changed. Session startup is untouched, so this never slows down opening a session.
+- **`episodic-memory doctor install` reports on every install on your machine.** Lists each Claude Code and Codex install, which editor manifests it has, and exactly which files are missing. Add `--repair` to fix them. Use this when the plugin is broken badly enough that it cannot fix itself.
+
 ## [1.5.8] - 2026-08-19
 
 ### Fixed

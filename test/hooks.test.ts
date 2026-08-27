@@ -54,12 +54,52 @@ describe('plugin hook configuration', () => {
   }
 });
 
-describe('Codex MCP server configuration', () => {
-  it('points at a real file in the repo so Codex MCP boot does not crash', () => {
-    const mcp = JSON.parse(
-      readFileSync(new URL('../.mcp.json', import.meta.url), 'utf-8')
+// The MCP server is launched by two different hosts that resolve paths in
+// incompatible ways, so each gets its own manifest and neither may regress:
+//
+//   Claude Code -> .claude-plugin/plugin.json  inline mcpServers, absolute via
+//                  ${CLAUDE_PLUGIN_ROOT}. Claude Code does NOT honor `cwd`, so a
+//                  relative arg would resolve against the process cwd (`/`).
+//   Codex       -> .codex-plugin/mcp.json      relative arg + cwd ".", which
+//                  Codex resolves against the plugin root.
+//
+// A root-level .mcp.json is deliberately absent: Claude Code auto-discovers one
+// as a *project* MCP server and would launch it with the Codex-shaped relative
+// path, producing `Cannot find module '/cli/mcp-server.mjs'`.
+describe('MCP server configuration', () => {
+  it('does not ship a root .mcp.json that Claude Code would misread as a project server', () => {
+    expect(existsSync(join(REPO_ROOT, '.mcp.json'))).toBe(false);
+  });
+
+  it('gives Claude Code an absolute plugin-root path that points at a real file', () => {
+    const manifest = JSON.parse(
+      readFileSync(join(REPO_ROOT, '.claude-plugin/plugin.json'), 'utf-8')
     );
-    const scriptRelPath = mcp.mcpServers['episodic-memory'].args[0];
-    expect(existsSync(join(REPO_ROOT, scriptRelPath))).toBe(true);
+    const server = manifest.mcpServers?.['episodic-memory'];
+    expect(server, 'Claude plugin manifest must declare the episodic-memory MCP server').toBeDefined();
+    expect(server.command).toBe('node');
+
+    const arg = server.args[0];
+    expect(arg.startsWith('${CLAUDE_PLUGIN_ROOT}/')).toBe(true);
+    expect(existsSync(join(REPO_ROOT, arg.replace('${CLAUDE_PLUGIN_ROOT}/', '')))).toBe(true);
+  });
+
+  it('gives Codex a plugin-root-relative path that points at a real file', () => {
+    const mcp = JSON.parse(
+      readFileSync(join(REPO_ROOT, '.codex-plugin/mcp.json'), 'utf-8')
+    );
+    const server = mcp.mcpServers['episodic-memory'];
+    expect(server.cwd).toBe('.');
+    expect(existsSync(join(REPO_ROOT, server.args[0]))).toBe(true);
+  });
+
+  it('launches the same entry point on both hosts', () => {
+    const claudeArg = JSON.parse(
+      readFileSync(join(REPO_ROOT, '.claude-plugin/plugin.json'), 'utf-8')
+    ).mcpServers['episodic-memory'].args[0].replace('${CLAUDE_PLUGIN_ROOT}/', '');
+    const codexArg = JSON.parse(
+      readFileSync(join(REPO_ROOT, '.codex-plugin/mcp.json'), 'utf-8')
+    ).mcpServers['episodic-memory'].args[0].replace(/^\.\//, '');
+    expect(claudeArg).toBe(codexArg);
   });
 });

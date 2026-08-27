@@ -308,6 +308,22 @@ episodic-memory doctor codex
 
 The Codex doctor checks the Codex version, plugin hook feature state, MCP server registration, transcript directory, database path, and background sync log path.
 
+```bash
+episodic-memory doctor install
+episodic-memory doctor install --repair
+```
+
+The install doctor finds every episodic-memory plugin install under the Claude
+Code and Codex plugin caches and reports any that are missing files. A partial
+`/plugin install` can leave a version directory without its `cli/` scripts or
+host manifest, which surfaces only as a repeating MCP connect timeout. `--repair`
+restores the missing paths from a matching local copy of the same version;
+existing files are never overwritten.
+
+The plugin also repairs itself at startup whenever one of its own entry points
+survived. `doctor install --repair` is for the case where none did — run it from
+any other working copy, or after reinstalling.
+
 ### Codex E2E Verification
 
 The repository includes an opt-in live Codex E2E test. It creates an isolated temporary `CODEX_HOME`, installs a copied plugin bundle, trusts the hook, runs Codex sessions in `tmux`, and verifies archive -> summary -> index -> MCP recall.

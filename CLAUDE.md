@@ -54,11 +54,12 @@ src/cli/
   mcp-server-wrapper.ts     # MCP server wrapper; redirects stderr
   search-conversations.ts   # Search CLI
 
-cli/                    # Extension-less shims for npm bin entries (spawn dist/cli/*.js)
-  episodic-memory
-  index-conversations
-  mcp-server
-  search-conversations
+cli/                    # .mjs shims for npm bin entries (spawn dist/cli/*.js)
+  episodic-memory.mjs
+  index-conversations.mjs
+  mcp-server.mjs
+  search-conversations.mjs
+  repair.mjs            # Plugin-file integrity + self-repair (Node builtins only)
 
 scripts/
   bump-version.sh           # version bumper with drift audit
@@ -105,6 +106,21 @@ test/
 - Build on install via `postinstall` hook (`scripts/postinstall.js`): it *verifies* the better-sqlite3 native binding actually loads (opens an in-memory DB), and only rebuilds if it doesn't — falling back to `--build-from-source` when no prebuilt binary covers the local Node ABI. Always exits 0 so a build failure never bricks `npm install`; loud stderr on real failure.
 - **Native-binding gotcha (Node ABI):** the postinstall only runs at install time. A Node upgrade *after* install changes the ABI and breaks the binding with `Could not locate the bindings file` — sync and MCP crash silently while the SessionStart hook still fires. The runtime self-heal (`src/native-binding.ts`) catches this on the next DB open and rebuilds in place (once per process, behind the shared `src/file-lock.ts` lock). Manual recovery: `cd <plugin-dir> && npm rebuild better-sqlite3`. A bleeding-edge Node (e.g. 26 / ABI 147) needs a from-source compile because no prebuilt binary exists yet, so a C/C++ toolchain must be present.
 - **`allowScripts` in `package.json`:** npm 11's install-script allowlist. The six native-build deps (`better-sqlite3`, `onnxruntime-node`, `esbuild`, `sharp`, `protobufjs`, `fsevents`) are declared with version-agnostic keys so `npm install` runs their build scripts without the advisory warning and won't break when npm makes the allowlist enforcing. Adding a new dependency with an install script → add its name here (run `npm approve-scripts <pkg>` then drop the `@version` suffix). Note: Claude Code's `/plugin install` skips dependency scripts entirely regardless, so the native binary is built by `scripts/postinstall.js` (npm path) or the runtime self-heal (plugin path), not by this allowlist.
+
+### Host MCP manifests (one per runtime, never shared)
+
+Claude Code and Codex resolve MCP paths incompatibly, so each gets its own file:
+
+- **Claude Code** — `.claude-plugin/plugin.json`, inline `mcpServers`, absolute
+  via `${CLAUDE_PLUGIN_ROOT}`. Claude Code does **not** honor `cwd`, so a
+  relative arg resolves against the process cwd (`/`).
+- **Codex** — `.codex-plugin/mcp.json`, relative arg + `cwd: "."`, which Codex
+  resolves against the plugin root. Pointed at by `.codex-plugin/plugin.json`.
+
+**Never add a root-level `.mcp.json`.** Claude Code auto-discovers one as a
+*project* MCP server and launches it with the Codex-shaped relative path,
+producing `Cannot find module '/cli/mcp-server.mjs'` behind a 10s connect
+timeout that retries forever. `test/hooks.test.ts` asserts its absence.
 
 ### MCP Server Quirks
 - Embedding output sent to stderr, not stdout (prevents protocol corruption)
@@ -221,6 +237,23 @@ The fix:
 - `sync-cli.ts` checks `shouldSkipReentrantSync()` at startup and exits silently when the guard is set
 
 **Anything new that spawns a Claude subprocess via the SDK must inherit this guard.** And nothing should run `sync --background` without checking the guard first. See `test/sync-cli-reentrancy.test.ts`.
+
+### Partial plugin installs
+
+`/plugin install` can leave a version directory half-populated — `dist/` and
+`node_modules/` present, `cli/` and `.claude-plugin/` never written. Nothing in
+the install is then reachable and the host just retries a connect timeout.
+
+- `cli/repair.mjs` checks `REQUIRED_ENTRIES` at every entry point and restores
+  missing paths from the host's marketplace clone (derived from the install
+  path) or a shallow clone of the version tag. Copies are non-destructive.
+- It imports **only Node builtins** and lives in `cli/`, not `src/`, so it stays
+  loadable when `dist/` is one of the missing pieces. Keep it that way — and
+  note the shims import `dist/install-check.js` *dynamically* for the same
+  reason: a static import would abort at module-load before repair could run.
+- When `cli/` itself is gone, nothing inside can self-heal. That is what
+  `episodic-memory doctor install --repair` is for — run it from any other copy.
+- Adding a file the plugin cannot start without → add it to `REQUIRED_ENTRIES`.
 
 ### Embedding migration (1.2.0+)
 
