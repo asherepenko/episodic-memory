@@ -1,4 +1,5 @@
 ---
+name: search-conversations
 description: Use when searching Claude Code and Codex history for information learned in past conversations or prior experience: decisions, patterns, solutions, pitfalls, project context, repeated workflows, or lessons from similar work.
 capabilities: ["semantic-search", "conversation-synthesis", "historical-context", "pattern-recognition", "decision-archaeology"]
 model: haiku

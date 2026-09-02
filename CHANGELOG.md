@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.10] - 2026-09-02
+
+### Fixed
+- **The conversation-search agent now registers on every host.** Hosts that discover agent profiles through the `agents/` directory require a `name` field in the profile's frontmatter — the manifest's `agents` list is only recorded there, never executed — and silently dropped the nameless profile on every session. The profile now declares `name: search-conversations`.
+- **The session-start hook no longer errors when the plugin root variable is missing.** A host that auto-discovers a hook manifest without exporting that manifest's root variable launched `node` against a literal unexpanded path on every session start. Both hook commands are now wrapped in an existence check, so the launch degrades to a no-op instead of a crash.
+
+### Added
+- **Packaging tests pin both shapes so neither can regress.** `test/agents.test.ts` asserts the agent frontmatter carries its name; `test/hooks.test.ts` asserts both hook commands stay behind the existence guard.
+
 ## [1.5.9] - 2026-08-27
 
 ### Fixed

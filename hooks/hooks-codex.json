@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/cli/episodic-memory.mjs\" sync --background",
+            "command": "if [ -f \"${PLUGIN_ROOT}/cli/episodic-memory.mjs\" ]; then node \"${PLUGIN_ROOT}/cli/episodic-memory.mjs\" sync --background; fi",
             "timeout": 10
           }
         ]

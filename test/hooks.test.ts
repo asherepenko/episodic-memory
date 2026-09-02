@@ -12,6 +12,11 @@ const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 // expression and a matcher the other host ignored, so the hook could silently
 // fail to launch. Claude Code auto-discovers hooks/hooks.json; Codex is pointed
 // at hooks/hooks-codex.json via .codex-plugin/plugin.json.
+//
+// Every command is wrapped in an `if [ -f ... ]` guard because a host can
+// auto-discover a manifest whose root variable it never exports; without the
+// guard that session runs `node` against a literal unexpanded path on every
+// SessionStart, and with it the launch degrades to a silent no-op.
 const TRANSPORTS = [
   { label: 'Claude Code', file: 'hooks/hooks.json', rootVar: '${CLAUDE_PLUGIN_ROOT}', hasMatcher: false },
   { label: 'Codex', file: 'hooks/hooks-codex.json', rootVar: '${PLUGIN_ROOT}', hasMatcher: true },
@@ -24,8 +29,10 @@ describe('plugin hook configuration', () => {
       const entry = hooks.hooks.SessionStart[0];
       const handler = entry.hooks[0];
 
-      it('launches the background sync via the transport-specific plugin root', () => {
-        expect(handler.command).toBe(`node "${rootVar}/cli/episodic-memory.mjs" sync --background`);
+      it('launches the background sync via the transport-specific plugin root behind an existence guard', () => {
+        expect(handler.command).toBe(
+          `if [ -f "${rootVar}/cli/episodic-memory.mjs" ]; then node "${rootVar}/cli/episodic-memory.mjs" sync --background; fi`
+        );
       });
 
       it('caps the launch with a short timeout so a slow start cannot hang session startup', () => {
