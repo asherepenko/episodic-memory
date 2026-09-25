@@ -61,6 +61,18 @@ export function formatDuration(ms) {
         return `${s}s`;
     return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
+/** The closing line: "done in 40s · 6 new transcripts · 13 exchanges indexed · 2 summarized". */
+export function formatSyncSummary(summary) {
+    const parts = [
+        `${summary.finished ? 'done' : 'stopped'} in ${formatDuration(summary.ms)}`,
+        `${plural(summary.copied, 'new transcript')}`,
+        `${plural(summary.exchanges, 'exchange')} indexed`,
+        `${num(summary.summarized)} summarized`,
+    ];
+    if (summary.errors > 0)
+        parts.push(plural(summary.errors, 'error'));
+    return parts.join(' · ');
+}
 export function formatBar(done, total) {
     const filled = total > 0 ? Math.min(BAR_WIDTH, Math.round((done / total) * BAR_WIDTH)) : BAR_WIDTH;
     return '━'.repeat(filled) + '─'.repeat(BAR_WIDTH - filled);

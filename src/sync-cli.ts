@@ -12,7 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { formatLogLine, getSyncLogPath } from './logging.js';
 import { acquireFileLock, readLockHolder, releaseFileLock } from './file-lock.js';
-import { createSyncReporter, formatDuration, fullProjectName } from './sync-report.js';
+import { createSyncReporter, formatSyncSummary, fullProjectName } from './sync-report.js';
 import os from 'os';
 
 const args = process.argv.slice(2);
@@ -233,14 +233,14 @@ async function syncAll() {
   } finally {
     session.close();
     const { copied, summarized, errors } = session.result;
-    const parts = [
-      `${finished ? 'done' : 'stopped'} in ${formatDuration(Date.now() - startedAt)}`,
-      `${copied.toLocaleString('en-US')} new transcripts`,
-      `${exchanges.toLocaleString('en-US')} exchanges indexed`,
-      `${summarized} summarized`,
-    ];
-    if (errors.length > 0) parts.push(`${errors.length} errors`);
-    reporter.finish(parts.join(' · '));
+    reporter.finish(formatSyncSummary({
+      finished,
+      ms: Date.now() - startedAt,
+      copied,
+      exchanges,
+      summarized,
+      errors: errors.length,
+    }));
     setConsoleInfoMuted(false);
   }
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSyncReporter, displayProjectName, formatRow, fullProjectName } from '../src/sync-report.js';
+import { createSyncReporter, displayProjectName, formatRow, formatSyncSummary, fullProjectName } from '../src/sync-report.js';
 
 const CLEAR_LINE = '\r\u001b[2K';
 const stripAnsi = (s: string) => s.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
@@ -155,5 +155,19 @@ describe('createSyncReporter', () => {
       '[1/2] auto-claude · 1e5fc7af               ✓  summarized in 14s',
       '[2/2] auto-claude · 1e5fc7af               ✗  failed: timeout after 180000ms',
     ]);
+  });
+});
+
+describe('formatSyncSummary', () => {
+  it('pluralizes each count', () => {
+    expect(formatSyncSummary({ finished: true, ms: 1000, copied: 1, exchanges: 1, summarized: 1, errors: 1 }))
+      .toBe('done in 1s · 1 new transcript · 1 exchange indexed · 1 summarized · 1 error');
+    expect(formatSyncSummary({ finished: true, ms: 40000, copied: 6, exchanges: 1234, summarized: 2, errors: 0 }))
+      .toBe('done in 40s · 6 new transcripts · 1,234 exchanges indexed · 2 summarized');
+  });
+
+  it('says stopped when the run did not finish', () => {
+    expect(formatSyncSummary({ finished: false, ms: 0, copied: 0, exchanges: 0, summarized: 0, errors: 2 }))
+      .toBe('stopped in 0s · 0 new transcripts · 0 exchanges indexed · 0 summarized · 2 errors');
   });
 });

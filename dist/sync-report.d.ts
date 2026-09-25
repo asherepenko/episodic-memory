@@ -9,6 +9,16 @@ export declare function fullProjectName(project: string, home?: string): string;
 export declare function displayProjectName(project: string, home?: string): string;
 export declare function formatRow(index: number, total: number, name: string, symbol: string, detail: string): string;
 export declare function formatDuration(ms: number): string;
+export interface SyncSummary {
+    finished: boolean;
+    ms: number;
+    copied: number;
+    exchanges: number;
+    summarized: number;
+    errors: number;
+}
+/** The closing line: "done in 40s · 6 new transcripts · 13 exchanges indexed · 2 summarized". */
+export declare function formatSyncSummary(summary: SyncSummary): string;
 export declare function formatBar(done: number, total: number): string;
 export interface SyncReporterOptions {
     color?: boolean;
