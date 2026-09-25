@@ -1,5 +1,5 @@
-export { syncConversations, resolveSummaryConcurrency } from './sync.js';
-export type { SyncResult, SyncOptions } from './sync.js';
+export { syncConversations, indexArchive, createSyncSession, listSourceProjects, listArchiveProjects, resolveSummaryConcurrency } from './sync.js';
+export type { SyncResult, SyncOptions, SyncEvent, IndexArchiveOptions, SyncSession, ProjectOutcome } from './sync.js';
 export {
   openConversationSyncStateStore,
   openMemoryConversationSyncStateStore,

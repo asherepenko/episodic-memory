@@ -7,11 +7,16 @@ const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '
 const FRAME_INTERVAL_MS = 120;
 const CLEAR_LINE = '\r\u001b[2K';
 
-interface ActiveProgress {
+export interface ActiveProgress {
   writeLine(message: string): void;
 }
 
 let activeProgress: ActiveProgress | undefined;
+
+/** Register (or clear) the renderer that owns the terminal's live row. */
+export function setActiveProgress(progress: ActiveProgress | undefined): void {
+  activeProgress = progress;
+}
 
 /** Write a terminal line without corrupting an active spinner row. */
 export function writeProgressAwareLine(message: string, fallback: () => void): void {

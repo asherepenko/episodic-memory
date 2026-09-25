@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { getIndexStats, formatStats, type IndexStats } from '../src/stats.js';
+import { getIndexStats, formatStats, countPendingIndex, type IndexStats } from '../src/stats.js';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 
@@ -153,6 +153,39 @@ describe('stats command', () => {
       const out = formatStats({ ...base, staleEmbeddings: 0 });
       expect(out).not.toContain('Stale Embeddings:');
       expect(out).not.toContain('Permanently Skipped:');
+    });
+
+    it('shows how many archived transcripts are waiting to be indexed', () => {
+      expect(formatStats({ ...base, pendingIndex: 0 })).toContain('Waiting to index: 0 (all archived transcripts indexed)');
+      const out = formatStats({ ...base, pendingIndex: 4656 });
+      expect(out).toContain('Waiting to index: 4,656 transcript(s)');
+      expect(out).toContain('episodic-memory sync');
+    });
+  });
+
+  describe('countPendingIndex', () => {
+    it('counts archived files with no indexed_files row or a newer mtime', () => {
+      const archive = join(testDir, 'archive');
+      mkdirSync(join(archive, 'p'), { recursive: true });
+      const done = join(archive, 'p', 'done.jsonl');
+      const changed = join(archive, 'p', 'changed.jsonl');
+      const fresh = join(archive, 'p', 'fresh.jsonl');
+      for (const f of [done, changed, fresh]) writeFileSync(f, '{}\n');
+      utimesSync(done, new Date(1000_000), new Date(1000_000));
+      utimesSync(changed, new Date(3000_000), new Date(3000_000));
+
+      const db = new Database(dbPath);
+      db.exec('CREATE TABLE indexed_files (archive_path TEXT PRIMARY KEY, mtime_ms REAL NOT NULL, exchange_count INTEGER NOT NULL)');
+      db.prepare('INSERT INTO indexed_files VALUES (?, ?, 1)').run(done, 1000_000);
+      db.prepare('INSERT INTO indexed_files VALUES (?, ?, 1)').run(changed, 2000_000);
+      db.close();
+
+      expect(countPendingIndex(archive, dbPath)).toBe(2);
+    });
+
+    it('returns undefined before the first sync creates indexed_files', () => {
+      new Database(dbPath).close();
+      expect(countPendingIndex(join(testDir, 'archive'), dbPath)).toBeUndefined();
     });
   });
 });

@@ -1,5 +1,6 @@
-import { getIndexStats, formatStats } from './stats.js';
+import { getIndexStats, formatStats, countPendingIndex } from './stats.js';
 import { countSyncStates } from './sync/index.js';
+import { getArchiveDir } from './paths.js';
 
 const args = process.argv.slice(2);
 
@@ -10,7 +11,7 @@ Usage: episodic-memory stats
 Display statistics about the indexed conversation archive.
 
 Shows:
-- Total conversations and exchanges
+- Total conversations and exchanges, and transcripts waiting to be indexed
 - Conversations with/without AI summaries
 - Date range coverage
 - Project breakdown
@@ -32,6 +33,11 @@ getIndexStats()
       stats.poisonConversations = countSyncStates().poison;
     } catch {
       // archive dir may not exist before the first sync
+    }
+    try {
+      stats.pendingIndex = countPendingIndex(getArchiveDir());
+    } catch {
+      // unreadable archive — leave the line out
     }
     console.log(formatStats(stats));
   })

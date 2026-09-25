@@ -3234,8 +3234,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path8) {
-      let input = path8;
+    function removeDotSegments(path9) {
+      let input = path9;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3434,8 +3434,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path8, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path8 && path8 !== "/" ? path8 : void 0;
+        const [path9, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6797,12 +6797,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs7, exportName) {
+    function addFormats(ajv, list, fs8, exportName) {
       var _a3;
       var _b;
       (_a3 = (_b = ajv.opts.code).formats) !== null && _a3 !== void 0 ? _a3 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs7[f]);
+        ajv.addFormat(f, fs8[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -6819,6 +6819,53 @@ function ensureDir(dir) {
     fs.mkdirSync(dir, { recursive: true });
   }
   return dir;
+}
+function entryIsDirectory(parent, entry) {
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return fs.statSync(path.join(parent, entry.name)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function entryIsJsonlFile(parent, entry) {
+  if (!entry.name.endsWith(".jsonl")) return false;
+  if (entry.isFile()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return fs.statSync(path.join(parent, entry.name)).isFile();
+  } catch {
+    return false;
+  }
+}
+function findJsonlFiles(dir, excludedDirNames, seen) {
+  const results = [];
+  const visited = seen ?? /* @__PURE__ */ new Set();
+  let real;
+  try {
+    real = fs.realpathSync(dir);
+  } catch {
+    return results;
+  }
+  if (visited.has(real)) return results;
+  visited.add(real);
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entryIsJsonlFile(dir, entry)) {
+        results.push(entry.name);
+      } else if (entryIsDirectory(dir, entry)) {
+        if (excludedDirNames?.has(entry.name)) continue;
+        const subDir = path.join(dir, entry.name);
+        for (const f of findJsonlFiles(subDir, excludedDirNames, visited)) {
+          results.push(path.join(entry.name, f));
+        }
+      }
+    }
+  } catch {
+  }
+  return results;
 }
 function getSuperpowersDir() {
   let dir;
@@ -6850,6 +6897,20 @@ function getDbPath() {
     return process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH;
   }
   return path.join(getIndexDir(), "db.sqlite");
+}
+function getExcludeConfigPath() {
+  return path.join(getIndexDir(), "exclude.txt");
+}
+function getExcludedProjects() {
+  if (process.env.CONVERSATION_SEARCH_EXCLUDE_PROJECTS) {
+    return process.env.CONVERSATION_SEARCH_EXCLUDE_PROJECTS.split(",").map((p) => p.trim());
+  }
+  const configPath = getExcludeConfigPath();
+  if (fs.existsSync(configPath)) {
+    const content = fs.readFileSync(configPath, "utf-8");
+    return content.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+  }
+  return [];
 }
 var init_paths = __esm({
   "src/paths.ts"() {
@@ -7361,7 +7422,27 @@ function initDatabase() {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tool_exchange ON tool_calls(exchange_id)
   `);
+  ensureIndexedFilesTable(db);
   return db;
+}
+function ensureIndexedFilesTable(db) {
+  const exists = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'indexed_files'"
+  ).get();
+  if (exists) return;
+  db.exec(`
+    CREATE TABLE indexed_files (
+      archive_path TEXT PRIMARY KEY,
+      mtime_ms REAL NOT NULL,
+      exchange_count INTEGER NOT NULL
+    )
+  `);
+  db.exec(`
+    INSERT INTO indexed_files (archive_path, mtime_ms, exchange_count)
+    SELECT archive_path, COALESCE(MAX(last_indexed), ${Date.now()}), COUNT(*)
+    FROM exchanges
+    GROUP BY archive_path
+  `);
 }
 var init_db = __esm({
   "src/db.ts"() {
@@ -7472,13 +7553,45 @@ var init_embedding_migration = __esm({
 // src/stats.ts
 var stats_exports = {};
 __export(stats_exports, {
+  countPendingIndex: () => countPendingIndex,
   formatStats: () => formatStats,
   getIndexStats: () => getIndexStats
 });
+import fs5 from "fs";
+import path7 from "path";
+function countPendingIndex(archiveDir, dbPath = getDbPath()) {
+  if (!fs5.existsSync(dbPath)) return void 0;
+  const db = openDatabase(dbPath, { readonly: true });
+  let mtimes;
+  try {
+    const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'indexed_files'").get();
+    if (!hasTable) return void 0;
+    const rows = db.prepare("SELECT archive_path, mtime_ms FROM indexed_files").all();
+    mtimes = new Map(rows.map((r) => [r.archive_path, r.mtime_ms]));
+  } finally {
+    db.close();
+  }
+  if (!fs5.existsSync(archiveDir)) return 0;
+  const excluded = new Set(getExcludedProjects());
+  let pending = 0;
+  for (const entry of fs5.readdirSync(archiveDir, { withFileTypes: true })) {
+    if (!entryIsDirectory(archiveDir, entry) || excluded.has(entry.name)) continue;
+    const projectDir = path7.join(archiveDir, entry.name);
+    for (const rel of findJsonlFiles(projectDir, excluded)) {
+      const file2 = path7.join(projectDir, rel);
+      const indexedAt = mtimes.get(file2);
+      try {
+        if (indexedAt === void 0 || fs5.statSync(file2).mtimeMs > indexedAt) pending++;
+      } catch {
+      }
+    }
+  }
+  return pending;
+}
 async function getIndexStats(dbPath) {
   const resolvedDbPath = dbPath || getDbPath();
-  const fs7 = await import("fs");
-  if (!fs7.existsSync(resolvedDbPath)) {
+  const fs8 = await import("fs");
+  if (!fs8.existsSync(resolvedDbPath)) {
     return {
       totalConversations: 0,
       conversationsWithSummaries: 0,
@@ -7546,21 +7659,28 @@ async function getIndexStats(dbPath) {
 function formatStats(stats) {
   let output = "Episodic Memory Index Statistics\n";
   output += "=".repeat(50) + "\n\n";
-  output += `Total Conversations: ${stats.totalConversations.toLocaleString()}
+  output += `Search Index
 `;
-  output += `Total Exchanges: ${stats.totalExchanges.toLocaleString()}
-
+  output += `  Conversations: ${stats.totalConversations.toLocaleString()}
 `;
-  output += `With Summaries: ${stats.conversationsWithSummaries.toLocaleString()}
+  output += `  Exchanges: ${stats.totalExchanges.toLocaleString()}
 `;
-  output += `Without Summaries: ${stats.conversationsWithoutSummaries.toLocaleString()}
-`;
-  if (stats.conversationsWithoutSummaries > 0) {
-    const percentage = (stats.conversationsWithoutSummaries / stats.totalConversations * 100).toFixed(1);
-    output += `  (${percentage}% missing summaries)
+  if (stats.pendingIndex !== void 0) {
+    output += stats.pendingIndex === 0 ? `  Waiting to index: 0 (all archived transcripts indexed)
+` : `  Waiting to index: ${stats.pendingIndex.toLocaleString()} transcript(s) \u2014 run: episodic-memory sync
 `;
   }
   output += "\n";
+  output += `Summaries (captions on search results; search works without them)
+`;
+  output += `  With Summaries: ${stats.conversationsWithSummaries.toLocaleString()}
+`;
+  output += `  Without Summaries: ${stats.conversationsWithoutSummaries.toLocaleString()}`;
+  if (stats.conversationsWithoutSummaries > 0 && stats.totalConversations > 0) {
+    const percentage = (stats.conversationsWithoutSummaries / stats.totalConversations * 100).toFixed(1);
+    output += ` (${percentage}%)`;
+  }
+  output += "\n\n";
   if (stats.dateRange) {
     output += `Date Range:
 `;
@@ -8129,10 +8249,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path8) {
-  if (!path8)
+function getElementAtPath(obj, path9) {
+  if (!path9)
     return obj;
-  return path8.reduce((acc, key) => acc?.[key], obj);
+  return path9.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -8541,11 +8661,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path8, issues) {
+function prefixIssues(path9, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path8);
+    iss.path.unshift(path9);
     return iss;
   });
 }
@@ -8692,16 +8812,16 @@ function flattenError(error51, mapper = (issue2) => issue2.message) {
 }
 function formatError(error51, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error52, path8 = []) => {
+  const processError = (error52, path9 = []) => {
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path9, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else {
-        const fullpath = [...path8, ...issue2.path];
+        const fullpath = [...path9, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -8728,17 +8848,17 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error51, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error52, path8 = []) => {
+  const processError = (error52, path9 = []) => {
     var _a3, _b;
     for (const issue2 of error52.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path9, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else {
-        const fullpath = [...path8, ...issue2.path];
+        const fullpath = [...path9, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -8770,8 +8890,8 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path8 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path8) {
+  const path9 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path9) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -21769,13 +21889,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path8 = ref.slice(1).split("/").filter(Boolean);
-  if (path8.length === 0) {
+  const path9 = ref.slice(1).split("/").filter(Boolean);
+  if (path9.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path8[0] === defsKey) {
-    const key = path8[1];
+  if (path9[0] === defsKey) {
+    const key = path9[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -25521,7 +25641,7 @@ function isRerankEnabled(flag) {
 }
 
 // src/search.ts
-import fs5 from "fs";
+import fs6 from "fs";
 import readline from "readline";
 var RERANK_POOL = 50;
 function buildSearchFilters(options) {
@@ -25684,8 +25804,8 @@ async function searchConversations(query, options = {}) {
     const exchange = exchangeFromRow(row);
     const summaryPath = row.archive_path.replace(".jsonl", "-summary.txt");
     let summary;
-    if (fs5.existsSync(summaryPath)) {
-      summary = fs5.readFileSync(summaryPath, "utf-8").trim();
+    if (fs6.existsSync(summaryPath)) {
+      summary = fs6.readFileSync(summaryPath, "utf-8").trim();
     }
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
@@ -25711,7 +25831,7 @@ Assistant: ${r.exchange.assistantMessage}`);
 }
 async function countLines(filePath) {
   try {
-    const fileStream = fs5.createReadStream(filePath);
+    const fileStream = fs6.createReadStream(filePath);
     const rl = readline.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -25727,7 +25847,7 @@ async function countLines(filePath) {
 }
 function getFileSizeInKB(filePath) {
   try {
-    const stats = fs5.lstatSync(filePath);
+    const stats = fs6.lstatSync(filePath);
     return Math.round(stats.size / 1024 * 10) / 10;
   } catch (error51) {
     return 0;
@@ -27517,12 +27637,12 @@ ${result}
 }
 
 // src/version.ts
-var VERSION = "1.5.9";
+var VERSION = "1.6.0";
 
 // src/mcp-server.ts
 init_paths();
-import fs6 from "fs";
-import path7 from "path";
+import fs7 from "fs";
+import path8 from "path";
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
@@ -27713,15 +27833,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     if (name === "read") {
       const params = ShowConversationInputSchema.parse(args);
-      const archiveDir = path7.resolve(getArchiveDir());
-      const resolvedPath = path7.resolve(params.path);
-      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path7.sep)) {
+      const archiveDir = path8.resolve(getArchiveDir());
+      const resolvedPath = path8.resolve(params.path);
+      if (resolvedPath !== archiveDir && !resolvedPath.startsWith(archiveDir + path8.sep)) {
         throw new Error(`Access denied: path is outside the archive directory`);
       }
-      if (!fs6.existsSync(resolvedPath)) {
+      if (!fs7.existsSync(resolvedPath)) {
         throw new Error(`File not found: ${params.path}`);
       }
-      const jsonlContent = fs6.readFileSync(resolvedPath, "utf-8");
+      const jsonlContent = fs7.readFileSync(resolvedPath, "utf-8");
       const markdownContent = formatConversationAsMarkdown(
         jsonlContent,
         params.startLine,

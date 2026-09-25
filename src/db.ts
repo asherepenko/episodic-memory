@@ -228,7 +228,54 @@ export function initDatabase(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_tool_exchange ON tool_calls(exchange_id)
   `);
 
+  ensureIndexedFilesTable(db);
+
   return db;
+}
+
+/**
+ * One row per archived transcript that indexing has finished with, including
+ * files that produced zero exchanges (exclusion markers, metadata-only). Sync
+ * indexes any archived file with no row, or whose mtime is newer than its row.
+ * Keying on this instead of "copied this run" is what lets a sync that crashed
+ * between copy and index heal on the next run.
+ */
+export function ensureIndexedFilesTable(db: Database.Database): void {
+  const exists = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'indexed_files'"
+  ).get();
+  if (exists) return;
+
+  db.exec(`
+    CREATE TABLE indexed_files (
+      archive_path TEXT PRIMARY KEY,
+      mtime_ms REAL NOT NULL,
+      exchange_count INTEGER NOT NULL
+    )
+  `);
+
+  // Seed from rows already indexed so an upgrade does not re-embed everything.
+  // last_indexed is when the file was last indexed; a file modified after that
+  // (grown, or copied by a run that crashed before indexing) stays stale.
+  // Legacy rows without last_indexed are assumed current.
+  db.exec(`
+    INSERT INTO indexed_files (archive_path, mtime_ms, exchange_count)
+    SELECT archive_path, COALESCE(MAX(last_indexed), ${Date.now()}), COUNT(*)
+    FROM exchanges
+    GROUP BY archive_path
+  `);
+}
+
+export function getIndexedFileMtimes(db: Database.Database): Map<string, number> {
+  const rows = db.prepare('SELECT archive_path, mtime_ms FROM indexed_files').all() as Array<{ archive_path: string; mtime_ms: number }>;
+  return new Map(rows.map(r => [r.archive_path, r.mtime_ms]));
+}
+
+export function markFileIndexed(db: Database.Database, archivePath: string, mtimeMs: number, exchangeCount: number): void {
+  db.prepare(`
+    INSERT OR REPLACE INTO indexed_files (archive_path, mtime_ms, exchange_count)
+    VALUES (?, ?, ?)
+  `).run(archivePath, mtimeMs, exchangeCount);
 }
 
 export function insertExchange(

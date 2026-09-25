@@ -1,5 +1,49 @@
-import { getDbPath } from './paths.js';
+import fs from 'fs';
+import path from 'path';
+import { getDbPath, getExcludedProjects, findJsonlFiles, entryIsDirectory } from './paths.js';
 import { openDatabase } from './db.js';
+/**
+ * Archived transcripts that the next sync would index: no indexed_files row,
+ * or modified since. Uses the same rule as sync, so 0 means search covers the
+ * whole archive. Undefined when the DB predates indexed_files.
+ */
+export function countPendingIndex(archiveDir, dbPath = getDbPath()) {
+    if (!fs.existsSync(dbPath))
+        return undefined;
+    const db = openDatabase(dbPath, { readonly: true });
+    let mtimes;
+    try {
+        const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'indexed_files'").get();
+        if (!hasTable)
+            return undefined;
+        const rows = db.prepare('SELECT archive_path, mtime_ms FROM indexed_files').all();
+        mtimes = new Map(rows.map(r => [r.archive_path, r.mtime_ms]));
+    }
+    finally {
+        db.close();
+    }
+    if (!fs.existsSync(archiveDir))
+        return 0;
+    const excluded = new Set(getExcludedProjects());
+    let pending = 0;
+    for (const entry of fs.readdirSync(archiveDir, { withFileTypes: true })) {
+        if (!entryIsDirectory(archiveDir, entry) || excluded.has(entry.name))
+            continue;
+        const projectDir = path.join(archiveDir, entry.name);
+        for (const rel of findJsonlFiles(projectDir, excluded)) {
+            const file = path.join(projectDir, rel);
+            const indexedAt = mtimes.get(file);
+            try {
+                if (indexedAt === undefined || fs.statSync(file).mtimeMs > indexedAt)
+                    pending++;
+            }
+            catch {
+                // vanished mid-walk
+            }
+        }
+    }
+    return pending;
+}
 export async function getIndexStats(dbPath) {
     const resolvedDbPath = dbPath || getDbPath();
     // Check if database exists
@@ -87,15 +131,25 @@ export async function getIndexStats(dbPath) {
 export function formatStats(stats) {
     let output = 'Episodic Memory Index Statistics\n';
     output += '='.repeat(50) + '\n\n';
-    output += `Total Conversations: ${stats.totalConversations.toLocaleString()}\n`;
-    output += `Total Exchanges: ${stats.totalExchanges.toLocaleString()}\n\n`;
-    output += `With Summaries: ${stats.conversationsWithSummaries.toLocaleString()}\n`;
-    output += `Without Summaries: ${stats.conversationsWithoutSummaries.toLocaleString()}\n`;
-    if (stats.conversationsWithoutSummaries > 0) {
-        const percentage = ((stats.conversationsWithoutSummaries / stats.totalConversations) * 100).toFixed(1);
-        output += `  (${percentage}% missing summaries)\n`;
+    output += `Search Index\n`;
+    output += `  Conversations: ${stats.totalConversations.toLocaleString()}\n`;
+    output += `  Exchanges: ${stats.totalExchanges.toLocaleString()}\n`;
+    if (stats.pendingIndex !== undefined) {
+        output += stats.pendingIndex === 0
+            ? `  Waiting to index: 0 (all archived transcripts indexed)\n`
+            : `  Waiting to index: ${stats.pendingIndex.toLocaleString()} transcript(s) — run: episodic-memory sync\n`;
     }
     output += '\n';
+    // Summaries are one-line captions on search results; search itself runs on
+    // exchanges, so a missing summary never hides a conversation.
+    output += `Summaries (captions on search results; search works without them)\n`;
+    output += `  With Summaries: ${stats.conversationsWithSummaries.toLocaleString()}\n`;
+    output += `  Without Summaries: ${stats.conversationsWithoutSummaries.toLocaleString()}`;
+    if (stats.conversationsWithoutSummaries > 0 && stats.totalConversations > 0) {
+        const percentage = ((stats.conversationsWithoutSummaries / stats.totalConversations) * 100).toFixed(1);
+        output += ` (${percentage}%)`;
+    }
+    output += '\n\n';
     if (stats.dateRange) {
         output += `Date Range:\n`;
         output += `  Earliest: ${new Date(stats.dateRange.earliest).toLocaleDateString()}\n`;

@@ -33,9 +33,20 @@ function write(level, msg) {
         // ignore log failures
     }
 }
+let consoleInfoMuted = false;
+/**
+ * Keep info lines out of the terminal (they still go to sync.log). The sync
+ * TUI turns this on so per-chunk summarizer chatter doesn't bury the rows;
+ * warnings and errors still print.
+ */
+export function setConsoleInfoMuted(muted) {
+    consoleInfoMuted = muted;
+}
 export const log = {
     info(msg) {
         write('info', msg);
+        if (consoleInfoMuted)
+            return;
         writeProgressAwareLine(msg, () => console.log(msg));
     },
     warn(msg) {

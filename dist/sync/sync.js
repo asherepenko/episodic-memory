@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { SUMMARIZER_CONTEXT_MARKER } from '../constants.js';
-import { getExcludedProjects, findJsonlFiles } from '../paths.js';
+import { getExcludedProjects, findJsonlFiles, entryIsDirectory } from '../paths.js';
 import { log } from '../logger.js';
 import { openConversationSyncStateStore, isRetriable, MAX_ATTEMPTS, } from './conversation-sync-state.js';
 const EXCLUSION_MARKERS = [
@@ -67,6 +67,83 @@ function copyIfNewer(src, dest) {
     fs.renameSync(tempDest, dest); // Atomic on same filesystem
     return true;
 }
+/**
+ * Indexes archived transcripts that indexed_files says are missing or stale.
+ * Opens the DB on first use and loads the embedding model only when a file
+ * actually needs indexing, so an up-to-date sync stays cheap.
+ */
+function createArchiveIndexer(excludedDirSet) {
+    let state;
+    let embeddingsReady = false;
+    async function open() {
+        if (state)
+            return state;
+        const { initDatabase, insertExchange, getIndexedFileMtimes, markFileIndexed } = await import('../db.js');
+        const db = initDatabase();
+        state = { db, mtimes: getIndexedFileMtimes(db), markFileIndexed, insertExchange };
+        return state;
+    }
+    return {
+        async indexProject(projectDir, project, onProgress) {
+            const out = { indexed: 0, exchanges: 0, errors: [] };
+            if (!fs.existsSync(projectDir))
+                return out;
+            const { db, mtimes, markFileIndexed, insertExchange } = await open();
+            const pending = [];
+            for (const rel of findJsonlFiles(projectDir, excludedDirSet)) {
+                const file = path.join(projectDir, rel);
+                try {
+                    const mtimeMs = fs.statSync(file).mtimeMs;
+                    const indexedAt = mtimes.get(file);
+                    if (indexedAt === undefined || mtimeMs > indexedAt)
+                        pending.push({ file, mtimeMs });
+                }
+                catch {
+                    // vanished between walk and stat
+                }
+            }
+            if (pending.length === 0)
+                return out;
+            const { generateExchangeEmbedding, initEmbeddings } = await import('../embeddings.js');
+            const { parseConversation } = await import('../parser.js');
+            for (const [i, { file, mtimeMs }] of pending.entries()) {
+                onProgress?.(i, pending.length);
+                try {
+                    if (shouldSkipConversation(file)) {
+                        markFileIndexed(db, file, mtimeMs, 0);
+                        mtimes.set(file, mtimeMs);
+                        continue;
+                    }
+                    const exchanges = await parseConversation(file, project, file);
+                    if (exchanges.length > 0 && !embeddingsReady) {
+                        await initEmbeddings();
+                        embeddingsReady = true;
+                    }
+                    for (const exchange of exchanges) {
+                        const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
+                        const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
+                        insertExchange(db, exchange, embedding, toolNames);
+                    }
+                    // Recorded only after every exchange landed: a crash mid-file leaves
+                    // no row, so the next run retries it (inserts are idempotent by id).
+                    markFileIndexed(db, file, mtimeMs, exchanges.length);
+                    mtimes.set(file, mtimeMs);
+                    out.indexed++;
+                    out.exchanges += exchanges.length;
+                }
+                catch (error) {
+                    out.errors.push({ file, error: error instanceof Error ? error.message : String(error) });
+                }
+            }
+            onProgress?.(pending.length, pending.length);
+            return out;
+        },
+        close() {
+            state?.db.close();
+            state = undefined;
+        },
+    };
+}
 export function extractSessionIdFromPath(filePath) {
     // Extract session ID from filename. Handles two formats:
     //  - Plain Claude UUID:        /path/to/abc-123-def.jsonl -> abc-123-def
@@ -83,189 +160,235 @@ export function extractSessionIdFromPath(filePath) {
     }
     return null;
 }
-export async function syncConversations(sourceDir, destDir, options = {}) {
-    const result = {
-        copied: 0,
-        skipped: 0,
-        indexed: 0,
-        summarized: 0,
-        errors: []
-    };
-    // Ensure source directory exists
-    if (!fs.existsSync(sourceDir)) {
-        return result;
-    }
+export function createSyncSession(destDir, options = {}) {
+    const result = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [] };
     const store = openConversationSyncStateStore();
-    // Collect files to index and summarize
-    const filesToIndex = [];
+    const emit = options.onEvent ?? (() => { });
+    const excludedDirSet = new Set(getExcludedProjects());
+    const indexer = createArchiveIndexer(excludedDirSet);
     const filesToSummarize = [];
-    // Walk source directory
-    const projectEntries = fs.readdirSync(sourceDir, { withFileTypes: true });
-    const excludedProjects = getExcludedProjects();
-    const excludedDirSet = new Set(excludedProjects);
-    for (const projectEntry of projectEntries) {
-        // Dirent.isDirectory() does not follow symlinks — worktree symlinks are skipped automatically
-        if (!projectEntry.isDirectory())
-            continue;
-        const project = projectEntry.name;
-        if (excludedDirSet.has(project)) {
-            log.info("\nSkipping excluded project: " + project);
-            continue;
+    // Index everything in the project's archive dir that indexed_files lacks —
+    // not just what was copied now. A run that dies between copy and index
+    // (e.g. a broken native binding) is healed here on the next run.
+    async function indexInto(outcome, project, onProgress) {
+        if (options.skipIndex)
+            return;
+        try {
+            const r = await indexer.indexProject(path.join(destDir, project), project, onProgress);
+            outcome.indexed += r.indexed;
+            outcome.exchanges += r.exchanges;
+            outcome.errors += r.errors.length;
+            result.indexed += r.indexed;
+            result.errors.push(...r.errors);
         }
-        const projectPath = path.join(sourceDir, project);
-        const files = findJsonlFiles(projectPath, excludedDirSet);
-        for (const file of files) {
-            const srcFile = path.join(projectPath, file);
-            const destFile = path.join(destDir, project, file);
-            try {
-                const wasCopied = copyIfNewer(srcFile, destFile);
-                let state;
-                if (wasCopied) {
-                    result.copied++;
-                    filesToIndex.push(destFile);
-                    state = store.markStale(destFile);
-                }
-                else {
-                    result.skipped++;
-                    state = store.load(destFile);
-                }
-                // Check if this file needs a summary (whether newly copied or existing)
-                if (!options.skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
-                    const sessionId = extractSessionIdFromPath(destFile);
-                    if (sessionId) {
-                        filesToSummarize.push({ path: destFile, sessionId, state });
+        catch (error) {
+            outcome.errors++;
+            result.errors.push({ file: path.join(destDir, project), error: error instanceof Error ? error.message : String(error) });
+        }
+    }
+    return {
+        result,
+        async syncProject(sourceDir, project, onProgress) {
+            const outcome = { copied: 0, indexed: 0, exchanges: 0, errors: 0 };
+            const projectPath = path.join(sourceDir, project);
+            for (const file of findJsonlFiles(projectPath, excludedDirSet)) {
+                const srcFile = path.join(projectPath, file);
+                const destFile = path.join(destDir, project, file);
+                try {
+                    const wasCopied = copyIfNewer(srcFile, destFile);
+                    let state;
+                    if (wasCopied) {
+                        result.copied++;
+                        outcome.copied++;
+                        state = store.markStale(destFile);
+                    }
+                    else {
+                        result.skipped++;
+                        state = store.load(destFile);
+                    }
+                    // Check if this file needs a summary (whether newly copied or existing)
+                    if (!options.skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
+                        const sessionId = extractSessionIdFromPath(destFile);
+                        if (sessionId) {
+                            filesToSummarize.push({ path: destFile, sessionId, state });
+                        }
                     }
                 }
-            }
-            catch (error) {
-                result.errors.push({
-                    file: srcFile,
-                    error: error instanceof Error ? error.message : String(error)
-                });
-            }
-        }
-    }
-    // Index copied files (unless skipIndex is set)
-    if (!options.skipIndex && filesToIndex.length > 0) {
-        const { initDatabase, insertExchange } = await import('../db.js');
-        const { initEmbeddings, generateExchangeEmbedding } = await import('../embeddings.js');
-        const { parseConversation } = await import('../parser.js');
-        const db = initDatabase();
-        await initEmbeddings();
-        for (const file of filesToIndex) {
-            try {
-                // Check for DO NOT INDEX marker
-                if (shouldSkipConversation(file)) {
-                    continue; // Skip indexing but file is already copied
+                catch (error) {
+                    outcome.errors++;
+                    result.errors.push({
+                        file: srcFile,
+                        error: error instanceof Error ? error.message : String(error)
+                    });
                 }
-                const project = path.basename(path.dirname(file));
-                const exchanges = await parseConversation(file, project, file);
-                for (const exchange of exchanges) {
-                    const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
-                    const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
-                    insertExchange(db, exchange, embedding, toolNames);
-                }
-                result.indexed++;
             }
-            catch (error) {
-                result.errors.push({
-                    file,
-                    error: error instanceof Error ? error.message : String(error)
-                });
+            await indexInto(outcome, project, onProgress);
+            return outcome;
+        },
+        async indexProject(project, onProgress) {
+            const outcome = { copied: 0, indexed: 0, exchanges: 0, errors: 0 };
+            await indexInto(outcome, project, onProgress);
+            return outcome;
+        },
+        async summarize() {
+            if (options.skipSummaries || filesToSummarize.length === 0)
+                return;
+            const { parseConversation } = await import('../parser.js');
+            const { summarizeConversation } = await import('../summarizer.js');
+            const { dedupAgainstSiblings } = await import('../dedup.js');
+            const beforeFilter = filesToSummarize.length;
+            const eligible = filesToSummarize.filter(f => f.state.kind !== 'poison' || isRetriable(f.state));
+            const skippedPoison = beforeFilter - eligible.length;
+            if (skippedPoison > 0) {
+                log.info(`Skipping ${skippedPoison} file(s) that exceeded ${MAX_ATTEMPTS} retries (set EPISODIC_MEMORY_RETRY_ALL=1 to retry).`);
             }
-        }
-        db.close();
-    }
-    // Generate summaries for files that need them
-    if (!options.skipSummaries && filesToSummarize.length > 0) {
-        const { parseConversation } = await import('../parser.js');
-        const { summarizeConversation } = await import('../summarizer.js');
-        const { dedupAgainstSiblings } = await import('../dedup.js');
-        const beforeFilter = filesToSummarize.length;
-        const eligible = filesToSummarize.filter(f => f.state.kind !== 'poison' || isRetriable(f.state));
-        const skippedPoison = beforeFilter - eligible.length;
-        if (skippedPoison > 0) {
-            log.info(`Skipping ${skippedPoison} file(s) that exceeded ${MAX_ATTEMPTS} retries (set EPISODIC_MEMORY_RETRY_ALL=1 to retry).`);
-        }
-        const summaryLimit = options.summaryLimit ?? 10;
-        const toSummarize = eligible.slice(0, summaryLimit);
-        const remaining = eligible.length - toSummarize.length;
-        const concurrency = resolveSummaryConcurrency(options.concurrency, process.env.EPISODIC_MEMORY_CONCURRENCY);
-        log.info(`Generating summaries for ${toSummarize.length} conversation(s) (concurrency=${concurrency})...`);
-        if (remaining > 0) {
-            log.info(`  (${remaining} more need summaries - will process on next sync)`);
-        }
-        async function summarizeOne(filePath) {
-            const startedAt = Date.now();
-            try {
+            const summaryLimit = options.summaryLimit ?? 10;
+            const toSummarize = eligible.slice(0, summaryLimit);
+            const remaining = eligible.length - toSummarize.length;
+            const concurrency = resolveSummaryConcurrency(options.concurrency, process.env.EPISODIC_MEMORY_CONCURRENCY);
+            log.info(`Generating summaries for ${toSummarize.length} conversation(s) (concurrency=${concurrency})...`);
+            if (remaining > 0) {
+                log.info(`  (${remaining} more need summaries - will process on next sync)`);
+            }
+            const total = toSummarize.length;
+            let finished = 0;
+            async function summarizeOne(filePath, index) {
+                const startedAt = Date.now();
                 const project = path.basename(path.dirname(filePath));
-                const exchanges = await parseConversation(filePath, project, filePath);
-                if (exchanges.length === 0) {
-                    // Zero-exchange / metadata-only file (#91). Mark the state terminal
-                    // so it isn't re-parsed and re-queued on every sync run. If the file
-                    // later grows, copyIfNewer → markStale re-opens it for summarization.
+                emit({ type: 'summary-start', file: filePath, project, index, total });
+                // Rows are numbered in completion order so parallel workers print 1, 2, 3...
+                const done = (ok, error) => emit({ type: 'summary-done', file: filePath, project, index: ++finished, total, ms: Date.now() - startedAt, ok, error });
+                try {
+                    const exchanges = await parseConversation(filePath, project, filePath);
+                    if (exchanges.length === 0) {
+                        // Zero-exchange / metadata-only file (#91). Mark the state terminal
+                        // so it isn't re-parsed and re-queued on every sync run. If the file
+                        // later grows, copyIfNewer → markStale re-opens it for summarization.
+                        store.save(filePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
+                        done(true);
+                        return;
+                    }
+                    // Only resume chunks if exchange count still matches; otherwise the
+                    // conversation grew/shrank and cached chunks are stale.
+                    const pre = store.load(filePath);
+                    const initialChunkSummaries = pre.kind === 'inProgress' && pre.totalExchanges === exchanges.length
+                        ? pre.chunkSummaries
+                        : [];
+                    log.info(`  Summarizing ${path.basename(filePath)} (${exchanges.length} exchanges)...`);
+                    const rawSummary = await summarizeConversation(exchanges, {
+                        initialChunkSummaries,
+                        onChunkComplete: (chunkSummaries, totalChunks, totalExchanges) => {
+                            store.save(filePath, {
+                                kind: 'inProgress',
+                                chunkSummaries,
+                                totalChunks,
+                                totalExchanges,
+                                lastUpdated: new Date().toISOString(),
+                            });
+                        },
+                    });
+                    const summaryPath = filePath.replace('.jsonl', '-summary.txt');
+                    const { summary, deduped, similarity } = await dedupAgainstSiblings(rawSummary, summaryPath);
+                    if (deduped) {
+                        log.info(`    deduped ${path.basename(filePath)} (similarity=${similarity?.toFixed(3)})`);
+                    }
+                    const tmpSummaryPath = `${summaryPath}.tmp.${process.pid}`;
+                    fs.writeFileSync(tmpSummaryPath, summary, 'utf-8');
+                    fs.renameSync(tmpSummaryPath, summaryPath);
+                    result.summarized++;
+                    store.clearFailure(filePath);
                     store.save(filePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
-                    return;
+                    log.info(`    done ${path.basename(filePath)} in ${Date.now() - startedAt}ms`);
+                    done(true);
                 }
-                // Only resume chunks if exchange count still matches; otherwise the
-                // conversation grew/shrank and cached chunks are stale.
-                const pre = store.load(filePath);
-                const initialChunkSummaries = pre.kind === 'inProgress' && pre.totalExchanges === exchanges.length
-                    ? pre.chunkSummaries
-                    : [];
-                log.info(`  Summarizing ${path.basename(filePath)} (${exchanges.length} exchanges)...`);
-                const rawSummary = await summarizeConversation(exchanges, {
-                    initialChunkSummaries,
-                    onChunkComplete: (chunkSummaries, totalChunks, totalExchanges) => {
-                        store.save(filePath, {
-                            kind: 'inProgress',
-                            chunkSummaries,
-                            totalChunks,
-                            totalExchanges,
-                            lastUpdated: new Date().toISOString(),
-                        });
-                    },
-                });
-                const summaryPath = filePath.replace('.jsonl', '-summary.txt');
-                const { summary, deduped, similarity } = await dedupAgainstSiblings(rawSummary, summaryPath);
-                if (deduped) {
-                    log.info(`    deduped ${path.basename(filePath)} (similarity=${similarity?.toFixed(3)})`);
+                catch (error) {
+                    const msg = error instanceof Error ? error.message : String(error);
+                    const newState = store.recordFailure(filePath, msg);
+                    const attempts = newState.kind === 'poison' ? newState.attempts : 0;
+                    log.warn(`    failed ${path.basename(filePath)} after ${Date.now() - startedAt}ms (attempt ${attempts}/${MAX_ATTEMPTS}): ${msg}`);
+                    result.errors.push({
+                        file: filePath,
+                        error: `Summary generation failed: ${msg}`
+                    });
+                    done(false, msg);
                 }
-                const tmpSummaryPath = `${summaryPath}.tmp.${process.pid}`;
-                fs.writeFileSync(tmpSummaryPath, summary, 'utf-8');
-                fs.renameSync(tmpSummaryPath, summaryPath);
-                result.summarized++;
-                store.clearFailure(filePath);
-                store.save(filePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
-                log.info(`    done ${path.basename(filePath)} in ${Date.now() - startedAt}ms`);
             }
-            catch (error) {
-                const msg = error instanceof Error ? error.message : String(error);
-                const newState = store.recordFailure(filePath, msg);
-                const attempts = newState.kind === 'poison' ? newState.attempts : 0;
-                log.warn(`    failed ${path.basename(filePath)} after ${Date.now() - startedAt}ms (attempt ${attempts}/${MAX_ATTEMPTS}): ${msg}`);
-                result.errors.push({
-                    file: filePath,
-                    error: `Summary generation failed: ${msg}`
-                });
+            // Bounded-concurrency pool: each worker pulls next file index until queue drained.
+            let cursor = 0;
+            const queue = toSummarize;
+            const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+                while (true) {
+                    const i = cursor++;
+                    if (i >= queue.length)
+                        return;
+                    await summarizeOne(queue[i].path, i + 1);
+                }
+            });
+            await Promise.all(workers);
+            const poisonCount = store.countPoison();
+            if (poisonCount > 0) {
+                log.info(`State: ${poisonCount} file(s) recorded as poison-pill (≥${MAX_ATTEMPTS} attempts).`);
             }
-        }
-        // Bounded-concurrency pool: each worker pulls next file index until queue drained.
-        let cursor = 0;
-        const queue = toSummarize;
-        const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
-            while (true) {
-                const i = cursor++;
-                if (i >= queue.length)
-                    return;
-                await summarizeOne(queue[i].path);
-            }
-        });
-        await Promise.all(workers);
-        const poisonCount = store.countPoison();
-        if (poisonCount > 0) {
-            log.info(`State: ${poisonCount} file(s) recorded as poison-pill (≥${MAX_ATTEMPTS} attempts).`);
-        }
+        },
+        close() {
+            indexer.close();
+        },
+    };
+}
+/** Project dirs in a source, minus excluded ones, sorted. */
+export function listSourceProjects(sourceDir) {
+    if (!fs.existsSync(sourceDir))
+        return [];
+    const excluded = new Set(getExcludedProjects());
+    return fs.readdirSync(sourceDir, { withFileTypes: true })
+        // Dirent.isDirectory() does not follow symlinks — worktree symlinks are skipped automatically
+        .filter(entry => entry.isDirectory() && !excluded.has(entry.name))
+        .map(entry => entry.name)
+        .sort();
+}
+/** Archive project dirs, minus excluded ones, sorted. */
+export function listArchiveProjects(destDir) {
+    if (!fs.existsSync(destDir))
+        return [];
+    const excluded = new Set(getExcludedProjects());
+    return fs.readdirSync(destDir, { withFileTypes: true })
+        .filter(entry => entryIsDirectory(destDir, entry) && !excluded.has(entry.name))
+        .map(entry => entry.name)
+        .sort();
+}
+async function runProjects(projects, session, onEvent, run) {
+    const emit = onEvent ?? (() => { });
+    for (const [i, project] of projects.entries()) {
+        const index = i + 1;
+        const total = projects.length;
+        emit({ type: 'project-start', project, index, total });
+        const outcome = await run(project, (done, of) => emit({ type: 'project-progress', project, index, total, done, of }));
+        emit({ type: 'project-done', project, index, total, ...outcome });
     }
-    return result;
+}
+/**
+ * Index archive project dirs that no source pass covered — typically projects
+ * whose live transcripts Claude Code has already deleted.
+ */
+export async function indexArchive(destDir, options = {}) {
+    const projects = listArchiveProjects(destDir).filter(name => !options.skipProjects?.has(name));
+    const session = createSyncSession(destDir, { skipSummaries: true });
+    try {
+        await runProjects(projects, session, options.onEvent, (project, onProgress) => session.indexProject(project, onProgress));
+    }
+    finally {
+        session.close();
+    }
+    return session.result;
+}
+export async function syncConversations(sourceDir, destDir, options = {}) {
+    const session = createSyncSession(destDir, options);
+    try {
+        await runProjects(listSourceProjects(sourceDir), session, options.onEvent, (project, onProgress) => session.syncProject(sourceDir, project, onProgress));
+    }
+    finally {
+        session.close();
+    }
+    await session.summarize();
+    return session.result;
 }

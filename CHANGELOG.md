@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-25
+
+### Fixed
+- **Search no longer misses conversations after a crashed sync.** Sync copied a transcript into the archive first and indexed it second, and it only ever indexed files it had just copied. When a run crashed in between — most often the native-module error after a Node upgrade (`Could not locate the bindings file`) — those transcripts were archived but never searchable, and no later sync went back for them. On one real archive this hid 4,656 transcripts and 35,969 exchanges, about 40% of the history. Sync now keeps a record of every file it has indexed and picks up anything missing or changed on the next run, including projects whose live transcripts Claude Code has already deleted. The first sync after upgrading catches up the backlog once (roughly 1,200 exchanges a minute); after that, syncs only touch new files. Conversations that were already indexed are not re-embedded.
+
+### Changed
+- **Sync output is one aligned list you can scan.** Every project gets one row — `✓ up to date`, `↓ 2 new transcripts · 742 exchanges`, or `✗` with an error count — sorted A–Z across Claude Code, Codex, and archive-only projects. Git worktrees fold into their repo's row (`└ 10 worktrees`) instead of repeating as near-identical names. The running row shows a yellow spinner, and a progress bar underneath ends as a one-line summary: time taken, new transcripts, exchanges indexed, summaries written. Summaries get their own numbered rows, and the summarizer's per-chunk chatter stays in `sync.log`. The background session-start log gets only the rows where something changed.
+- **`episodic-memory stats` leads with what search can see.** A new *Search Index* section shows indexed conversations and exchanges and **Waiting to index** — `0` means every archived transcript is searchable. Summaries are listed separately and labeled as captions on search results, since search works without them.
+
 ## [1.5.10] - 2026-09-02
 
 ### Fixed

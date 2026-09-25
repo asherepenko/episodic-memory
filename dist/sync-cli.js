@@ -1,6 +1,7 @@
-import { syncConversations } from './sync/index.js';
+import { createSyncSession, listArchiveProjects, listSourceProjects } from './sync/index.js';
+import { groupProjects } from './sync/project-groups.js';
 import { getArchiveDir, getConversationSourceDirs, getIndexDir } from './paths.js';
-import { closeLog, getLogPath } from './logger.js';
+import { closeLog, getLogPath, setConsoleInfoMuted } from './logger.js';
 import { shouldSkipReentrantSync } from './summarizer.js';
 import { initDatabase } from './db.js';
 import { generateExchangeEmbedding, initEmbeddings } from './embeddings.js';
@@ -10,7 +11,8 @@ import fs from 'fs';
 import path from 'path';
 import { formatLogLine, getSyncLogPath } from './logging.js';
 import { acquireFileLock, readLockHolder, releaseFileLock } from './file-lock.js';
-import { createProgressIndicator } from './progress.js';
+import { createSyncReporter, formatDuration, fullProjectName } from './sync-report.js';
+import os from 'os';
 const args = process.argv.slice(2);
 // Reentrancy guard (#87): if this sync was triggered by a SessionStart hook
 // inside a Claude subprocess that the summarizer just spawned, exit silently.
@@ -149,46 +151,95 @@ process.on('exit', releaseSyncLockOnce);
 process.on('SIGINT', () => { releaseSyncLockOnce(); process.exit(130); });
 process.on('SIGTERM', () => { releaseSyncLockOnce(); process.exit(143); });
 process.on('SIGHUP', () => { releaseSyncLockOnce(); process.exit(129); });
-console.log('Syncing conversations...');
-console.log(`Sources: ${sourceDirs.join(', ')}`);
-console.log(`Destination: ${destDir}`);
-console.log(`Log: ${getLogPath()} (tail -f for live progress)\n`);
-async function syncAll() {
-    const totals = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [], sourcesWithSummaryWork: 0, totalNeedingSummaries: 0 };
-    const progress = createProgressIndicator('Syncing conversations');
-    progress.start();
-    try {
-        for (const [index, sourceDir] of sourceDirs.entries()) {
-            progress.update(`Syncing source ${index + 1}/${sourceDirs.length}`);
-            const result = await syncConversations(sourceDir, destDir, { summaryLimit, concurrency });
-            totals.copied += result.copied;
-            totals.skipped += result.skipped;
-            totals.indexed += result.indexed;
-            totals.summarized += result.summarized;
-            totals.errors.push(...result.errors);
+const tildify = (p) => (p.startsWith(os.homedir()) ? '~' + p.slice(os.homedir().length) : p);
+console.log(`Archive: ${tildify(destDir)}  ·  Log: ${tildify(getLogPath())}`);
+const isCodexSource = (sourceDir) => sourceDir.includes(`${path.sep}.codex${path.sep}`);
+/**
+ * One list across every source plus archive-only projects (live transcripts
+ * deleted), with worktrees folded into their repo, sorted by display name.
+ */
+function planProjects() {
+    const members = [];
+    const covered = new Set();
+    for (const sourceDir of sourceDirs) {
+        for (const project of listSourceProjects(sourceDir)) {
+            members.push({ project, sourceDir });
+            covered.add(project);
         }
-        // After regular sync, do a batch of embedding migration if any rows are
-        // still on the old encoder. Lock-protected; if another process is already
-        // migrating, this is a no-op.
-        progress.update('Updating embeddings');
-        await runEmbeddingMigrationPhase();
-        progress.complete('Sync complete');
     }
-    catch (error) {
-        progress.complete('Sync failed');
-        throw error;
+    for (const project of listArchiveProjects(destDir)) {
+        if (!covered.has(project))
+            members.push({ project });
     }
-    console.log(`\n✅ Sync complete!`);
-    console.log(`  Copied: ${totals.copied}`);
-    console.log(`  Skipped: ${totals.skipped}`);
-    console.log(`  Indexed: ${totals.indexed}`);
-    console.log(`  Summarized: ${totals.summarized}`);
-    if (totals.errors.length > 0) {
-        console.log(`\n⚠️  Errors: ${totals.errors.length}`);
-        totals.errors.forEach(err => console.log(`  ${err.file}: ${err.error}`));
+    const codexProjects = new Set(members.filter(m => m.sourceDir && isCodexSource(m.sourceDir)).map(m => m.project));
+    return groupProjects(members)
+        .map(group => ({ ...group, label: codexProjects.has(group.key) ? `codex ${group.key}` : undefined }))
+        .sort((a, b) => (a.label ?? fullProjectName(a.key)).localeCompare(b.label ?? fullProjectName(b.key), 'en', { sensitivity: 'base' }));
+}
+async function syncAll() {
+    const startedAt = Date.now();
+    const reporter = createSyncReporter();
+    if (process.stderr.isTTY)
+        setConsoleInfoMuted(true);
+    const session = createSyncSession(destDir, { summaryLimit, concurrency, onEvent: event => reporter.onEvent(event) });
+    let exchanges = 0;
+    let finished = false;
+    try {
+        const groups = planProjects();
+        reporter.start(groups.length);
+        for (const [i, group] of groups.entries()) {
+            const index = i + 1;
+            const total = groups.length;
+            const project = group.key;
+            const label = group.label;
+            reporter.onEvent({ type: 'project-start', project, label, index, total });
+            const sum = { copied: 0, indexed: 0, exchanges: 0, errors: 0 };
+            for (const member of group.members) {
+                const onProgress = (done, of) => reporter.onEvent({ type: 'project-progress', project, label, index, total, done, of });
+                const outcome = member.sourceDir
+                    ? await session.syncProject(member.sourceDir, member.project, onProgress)
+                    : await session.indexProject(member.project, onProgress);
+                sum.copied += outcome.copied;
+                sum.indexed += outcome.indexed;
+                sum.exchanges += outcome.exchanges;
+                sum.errors += outcome.errors;
+            }
+            exchanges += sum.exchanges;
+            reporter.onEvent({ type: 'project-done', project, label, index, total, ...sum, worktrees: group.worktrees });
+        }
+        reporter.heading('Summaries');
+        await session.summarize();
+        finished = true;
+    }
+    finally {
+        session.close();
+        const { copied, summarized, errors } = session.result;
+        const parts = [
+            `${finished ? 'done' : 'stopped'} in ${formatDuration(Date.now() - startedAt)}`,
+            `${copied.toLocaleString('en-US')} new transcripts`,
+            `${exchanges.toLocaleString('en-US')} exchanges indexed`,
+            `${summarized} summarized`,
+        ];
+        if (errors.length > 0)
+            parts.push(`${errors.length} errors`);
+        reporter.finish(parts.join(' · '));
+        setConsoleInfoMuted(false);
+    }
+    // After regular sync, do a batch of embedding migration if any rows are
+    // still on the old encoder. Lock-protected; if another process is already
+    // migrating, this is a no-op.
+    await runEmbeddingMigrationPhase();
+    const { errors, summarized } = session.result;
+    if (errors.length > 0) {
+        const shown = errors.slice(0, 10);
+        console.log('');
+        shown.forEach(err => console.log(`  ✗ ${tildify(err.file)}: ${err.error.split('\n')[0]}`));
+        if (errors.length > shown.length) {
+            console.log(`  …and ${errors.length - shown.length} more (see ${tildify(getLogPath())})`);
+        }
         // Help diagnose silent summarization failures (#70)
-        const summaryErrors = totals.errors.filter(e => e.error.startsWith('Summary generation failed'));
-        if (summaryErrors.length > 0 && totals.summarized === 0) {
+        const summaryErrors = errors.filter(e => e.error.startsWith('Summary generation failed'));
+        if (summaryErrors.length > 0 && summarized === 0) {
             console.log(`\n💡 All ${summaryErrors.length} summarization attempts failed.`);
             console.log(`  Check your API configuration (EPISODIC_MEMORY_API_BASE_URL / ANTHROPIC_API_KEY).`);
         }

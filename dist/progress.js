@@ -2,6 +2,10 @@ const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '
 const FRAME_INTERVAL_MS = 120;
 const CLEAR_LINE = '\r\u001b[2K';
 let activeProgress;
+/** Register (or clear) the renderer that owns the terminal's live row. */
+export function setActiveProgress(progress) {
+    activeProgress = progress;
+}
 /** Write a terminal line without corrupting an active spinner row. */
 export function writeProgressAwareLine(message, fallback) {
     if (activeProgress) {

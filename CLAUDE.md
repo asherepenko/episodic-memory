@@ -133,6 +133,7 @@ timeout that retries forever. `test/hooks.test.ts` asserts its absence.
 - Vectors: 384-dim (bge-small-en-v1.5 default)
 - `exchanges.embedding_version` tracks the encoder version per row; bumping `EMBEDDING_VERSION` triggers automatic re-embedding on upgrade
 - `tool_calls` has `ON DELETE CASCADE` FK to exchanges
+- `indexed_files(archive_path, mtime_ms, exchange_count)` is the index-completeness ledger: sync indexes every archived `.jsonl` with no row or a newer mtime — not just files copied this run — so a sync that crashes between copy and index heals on the next run. Zero-exchange and marker-excluded files get a row too (count 0). First creation seeds it from `exchanges` (`MAX(last_indexed)`), so upgrades don't re-embed. `stats` reports the pending count as "Waiting to index"
 - Verify + repair via `src/verify.ts`
 
 ## Conversation Exchange Format
@@ -172,7 +173,8 @@ interface ConversationExchange {
 
 **Index conversations**: `episodic-memory sync [--limit N] [--background]`
 - Copies .jsonl files from `~/.claude/projects` and `~/.claude/transcripts` to archive
-- Parses + indexes into SQLite with vector embeddings
+- Parses + indexes into SQLite with vector embeddings — any archived file missing from `indexed_files`, including archive-only projects whose live transcripts were deleted
+- Terminal output (`src/sync-report.ts`): one merged A–Z list across Claude, Codex, and archive-only projects; git worktrees fold into their repo's row (`src/sync/project-groups.ts`); yellow spinner on the live row, progress bar underneath that ends as the summary line. Off a TTY: no spinner/bar, only rows with changes. `sync-cli.ts` drives `createSyncSession()` one project at a time; `syncConversations()`/`indexArchive()` are thin wrappers kept for tests
 - Supports exclude.txt to skip projects (nested directory matching, see #80)
 - Indexes new exchanges appended to previously-indexed transcripts (see #84)
 

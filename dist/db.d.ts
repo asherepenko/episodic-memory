@@ -22,6 +22,16 @@ export declare function migrateSchema(db: Database.Database): void;
  */
 export declare function migrateToolCallsCascade(db: Database.Database): void;
 export declare function initDatabase(): Database.Database;
+/**
+ * One row per archived transcript that indexing has finished with, including
+ * files that produced zero exchanges (exclusion markers, metadata-only). Sync
+ * indexes any archived file with no row, or whose mtime is newer than its row.
+ * Keying on this instead of "copied this run" is what lets a sync that crashed
+ * between copy and index heal on the next run.
+ */
+export declare function ensureIndexedFilesTable(db: Database.Database): void;
+export declare function getIndexedFileMtimes(db: Database.Database): Map<string, number>;
+export declare function markFileIndexed(db: Database.Database, archivePath: string, mtimeMs: number, exchangeCount: number): void;
 export declare function insertExchange(db: Database.Database, exchange: ConversationExchange, embedding: number[], toolNames?: string[]): void;
 export declare function getAllExchanges(db: Database.Database): Array<{
     id: string;
