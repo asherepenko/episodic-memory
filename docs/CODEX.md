@@ -21,7 +21,13 @@ codex plugin marketplace add /path/to/episodic-memory
 
 Then start Codex, open `/plugins`, and install/enable `episodic-memory` from `Episodic Memory Dev`.
 
-Enable plugin hooks:
+Enable hooks:
+
+```bash
+codex features enable hooks
+```
+
+On older Codex releases, run `codex features list`. If `plugin_hooks` is listed with a status other than `removed`, enable that feature instead:
 
 ```bash
 codex features enable plugin_hooks
@@ -56,7 +62,7 @@ The doctor checks:
 
 - Codex version is at least `0.130.0`
 - `$CODEX_HOME/sessions` exists
-- `plugins` and `plugin_hooks` are enabled
+- `plugins` and the applicable hook feature are enabled (`hooks` on current Codex; `plugin_hooks` on older releases that still support it)
 - `codex mcp list` shows `episodic-memory` enabled
 - the memory database and hook/background sync log paths
 

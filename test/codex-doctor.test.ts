@@ -23,6 +23,28 @@ describe('Codex doctor report', () => {
     expect(report.text).toContain('/tmp/superpowers/logs/episodic-memory.log');
   });
 
+  it.each([
+    ['hooks stable true\nplugin_hooks removed false\nplugins stable true\n', true, 'hooks'],
+    ['hooks stable true\nplugins stable true\n', true, 'hooks'],
+    ['hooks stable false\nplugin_hooks removed true\nplugins stable true\n', false, 'hooks'],
+    ['hooks stable true\nplugin_hooks under development false\nplugins stable true\n', false, 'plugin_hooks'],
+    ['plugins stable true\n', false, 'hooks'],
+  ])('selects the active hook feature from %s', (featuresOutput, ok, feature) => {
+    const report = buildCodexDoctorReport({
+      codexVersionOutput: 'codex-cli 0.162.0',
+      featuresOutput,
+      mcpListOutput: 'episodic-memory node ./cli/mcp-server.mjs enabled',
+      codexHome: '/tmp/codex-home',
+      sessionsDirExists: true,
+      logPath: '/tmp/episodic-memory.log',
+      dbPath: '/tmp/db.sqlite',
+      hookTrustState: 'trusted',
+    });
+    expect(report.ok).toBe(ok);
+    if (!ok) expect(report.text).toContain(`codex features enable ${feature}.`);
+    if (feature === 'hooks') expect(report.text).not.toContain('codex features enable plugin_hooks');
+  });
+
   it('does not tell users to trust hooks when the Episodic Memory hook is already trusted', () => {
     const report = buildCodexDoctorReport({
       codexVersionOutput: 'codex-cli 0.130.0',

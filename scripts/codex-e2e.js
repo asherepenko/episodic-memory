@@ -87,11 +87,16 @@ function copyCodexAuth(targetCodexHome) {
   }
 }
 
-function writeBaseConfig(codexHome) {
-  fs.mkdirSync(codexHome, { recursive: true });
-  fs.writeFileSync(
-    path.join(codexHome, 'config.toml'),
-    `model = "gpt-5.5"
+export function buildBaseConfig(featuresOutput) {
+  const featureLines = featuresOutput.split(/\r?\n/).map(line => line.trim());
+  const legacyHookLine = featureLines.find(line => /^plugin_hooks\s+/.test(line));
+  const hookFeature = legacyHookLine && !/^plugin_hooks\s+removed\s+/.test(legacyHookLine)
+    ? 'plugin_hooks' : 'hooks';
+  if (!featureLines.some(line => line.startsWith(`${hookFeature} `) &&
+      !new RegExp(`^${hookFeature}\\s+removed\\s+`).test(line))) {
+    throw new Error('could not identify an active Codex hook feature');
+  }
+  return `model = "gpt-5.5"
 approval_policy = "never"
 sandbox_mode = "read-only"
 
@@ -100,13 +105,16 @@ enabled = false
 
 [features]
 plugins = true
-plugin_hooks = true
+${hookFeature} = true
 
 [plugins."episodic-memory@test"]
 enabled = true
-`,
-    'utf-8'
-  );
+`;
+}
+
+function writeBaseConfig(codexHome, featuresOutput) {
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), buildBaseConfig(featuresOutput), 'utf-8');
 }
 
 function appendHookTrust(codexHome, hook) {
@@ -285,6 +293,7 @@ async function main() {
   if (!codexVersion || compareSemver(codexVersion, MIN_CODEX_VERSION) < 0) {
     die(`codex-cli >= ${MIN_CODEX_VERSION} is required; found ${codexVersionOutput || 'unknown'}`);
   }
+  const featuresOutput = run('codex', ['features', 'list']);
   run('tmux', ['-V']);
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'em-codex-plugin-e2e-'));
@@ -299,7 +308,7 @@ async function main() {
 
   copyPlugin(pluginRoot);
   copyCodexAuth(codexHome);
-  writeBaseConfig(codexHome);
+  writeBaseConfig(codexHome, featuresOutput);
 
   const env = {
     ...process.env,
@@ -361,7 +370,9 @@ async function main() {
   console.log(`Database: ${dbPath}`);
 }
 
-main().catch(error => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main().catch(error => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error));
+    process.exit(1);
+  });
+}

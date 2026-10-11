@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-10-11
+
+### Fixed
+- **Codex doctor recognizes current hook handling.** Current Codex releases report `plugin_hooks` as removed and use `hooks` instead. The doctor now checks the applicable feature, avoiding a false disabled-hooks warning while retaining support for older releases.
+- **Codex E2E setup selects the supported hook feature.** The harness reads `codex features list` before configuring its isolated installation, so it no longer enables the removed `plugin_hooks` flag on current Codex. Setup documentation now covers current and legacy releases.
+
 ## [1.6.1] - 2026-09-25
 
 ### Fixed

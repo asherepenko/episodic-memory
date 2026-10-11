@@ -64,7 +64,11 @@ function formatHookTrustState(hookTrustState: CodexHookTrustState): string {
 export function buildCodexDoctorReport(inputs: CodexDoctorInputs): DoctorReport {
   const version = parseCodexCliVersion(inputs.codexVersionOutput);
   const versionOk = version !== undefined && versionMeetsMinimum(version);
-  const pluginHooksEnabled = parseFeatureState(inputs.featuresOutput, 'plugin_hooks');
+  const legacyHookLine = inputs.featuresOutput.split(/\r?\n/)
+    .find(line => /^plugin_hooks\s+/.test(line.trim()));
+  const hookFeature = legacyHookLine && !/^plugin_hooks\s+removed\s+/.test(legacyHookLine.trim())
+    ? 'plugin_hooks' : 'hooks';
+  const pluginHooksEnabled = parseFeatureState(inputs.featuresOutput, hookFeature);
   const pluginsEnabled = parseFeatureState(inputs.featuresOutput, 'plugins');
   const mcpState = parseMcpState(inputs.mcpListOutput);
 
@@ -76,7 +80,7 @@ export function buildCodexDoctorReport(inputs: CodexDoctorInputs): DoctorReport 
     issues.push('Codex plugins are disabled; run codex features enable plugins.');
   }
   if (pluginHooksEnabled !== true) {
-    issues.push('Codex plugin hooks are not enabled; run codex features enable plugin_hooks.');
+    issues.push(`Codex plugin hooks are not enabled; run codex features enable ${hookFeature}.`);
   }
   if (!inputs.sessionsDirExists) {
     issues.push('Codex sessions directory does not exist yet; start at least one Codex session.');
@@ -100,7 +104,7 @@ export function buildCodexDoctorReport(inputs: CodexDoctorInputs): DoctorReport 
     `Codex home: ${inputs.codexHome}`,
     `Codex sessions: ${inputs.sessionsDirExists ? 'found' : 'missing'}`,
     `Plugins feature: ${pluginsEnabled === true ? 'enabled' : pluginsEnabled === false ? 'disabled' : 'unknown'}`,
-    `Plugin hooks feature: ${pluginHooksEnabled === true ? 'enabled' : pluginHooksEnabled === false ? 'disabled' : 'unknown'}`,
+    `Plugin hooks feature${hookFeature === 'hooks' ? ' (hooks)' : ''}: ${pluginHooksEnabled === true ? 'enabled' : pluginHooksEnabled === false ? 'disabled' : 'unknown'}`,
     `Episodic Memory MCP: ${mcpState}`,
     `Index database: ${inputs.dbPath}`,
     `Hook/background sync log: ${inputs.logPath}`,

@@ -83,7 +83,7 @@ install/enable it from `/plugins`:
 
 ```bash
 npm run build
-codex features enable plugin_hooks
+codex features enable hooks
 codex plugin marketplace add /path/to/episodic-memory
 ```
 
@@ -97,11 +97,13 @@ The Codex plugin:
 - Installs the same memory skill, with Codex-specific direct MCP guidance
 - Runs a `SessionStart` hook after the user reviews and trusts it in `/hooks`
 
-Enable plugin hooks before relying on automatic sync:
+Enable hooks before relying on automatic sync:
 
 ```bash
-codex features enable plugin_hooks
+codex features enable hooks
 ```
+
+On older Codex releases where `codex features list` shows an active `plugin_hooks` feature, enable `plugin_hooks` instead. Do not enable it when its status is `removed`.
 
 Then open `/hooks` in Codex, review the Episodic Memory hook, and press `t` to trust it. New or modified Codex hooks are listed but do not run until trusted.
 
