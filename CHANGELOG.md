@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-10-13
+
+### Changed
+- **`episodic-memory index` looks and works like `sync`.** It used to print a wall of `Processing project:` and `Archived:` lines. Now it shows the same aligned A–Z project list, spinner, progress bar, and one-line summary as `sync`. `index`, `index --cleanup`, and `index --rebuild` all run the same engine as `sync`, so they skip transcripts that are already indexed instead of re-embedding every exchange, and they heal gaps left by a crashed sync. Unlike `sync`, `index` still writes every pending summary, not just 10. `--no-summaries` and `--concurrency` work as before. The default is now 2 summary workers, matching `sync`.
+- **`index` waits its turn.** If a sync is already running, for example the one the session-start hook launches, `index` stops and tells you, instead of writing to the database at the same time.
+
 ## [1.6.2] - 2026-10-11
 
 ### Fixed

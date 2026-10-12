@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { verifyIndex, repairIndex } from './verify.js';
-import { indexSession, indexUnprocessed, indexConversations } from './indexer.js';
+import { indexSession } from './indexer.js';
 import { getDbPath, getArchiveDir } from './paths.js';
 import fs from 'fs';
 import path from 'path';
 import { createProgressIndicator } from './progress.js';
+import { acquireSyncLock, runSync } from './sync-run.js';
 const command = process.argv[2];
 // Parse --concurrency flag from remaining args
 function getConcurrency() {
@@ -14,7 +15,7 @@ function getConcurrency() {
         if (value >= 1 && value <= 16)
             return value;
     }
-    return 1; // default
+    return undefined; // EPISODIC_MEMORY_CONCURRENCY, then the sync default
 }
 // Parse --no-summaries flag
 function getNoSummaries() {
@@ -35,6 +36,18 @@ async function withProgress(label, work) {
         throw error;
     }
 }
+/**
+ * Index everything the ledger is missing, with the same grouped report as
+ * `sync`. Unlike sync, summarize every eligible conversation, not just 10.
+ */
+async function indexAll() {
+    const lock = acquireSyncLock();
+    if (!lock.ok) {
+        console.error(`episodic-memory: a sync is already running (${lock.holder}); try again when it finishes`);
+        process.exit(1);
+    }
+    await runSync({ summaryLimit: Infinity, concurrency, skipSummaries: noSummaries });
+}
 async function main() {
     try {
         switch (command) {
@@ -44,10 +57,10 @@ async function main() {
                     console.error('Usage: index-cli index-session <session-id>');
                     process.exit(1);
                 }
-                await withProgress('Indexing session', () => indexSession(sessionId, concurrency, noSummaries));
+                await withProgress('Indexing session', () => indexSession(sessionId, concurrency ?? 1, noSummaries));
                 break;
             case 'index-cleanup':
-                await withProgress('Indexing unprocessed conversations', () => indexUnprocessed(concurrency, noSummaries));
+                await indexAll();
                 break;
             case 'verify':
                 console.log('Verifying conversation index...');
@@ -103,12 +116,11 @@ async function main() {
                     console.log('Deleted all summary files');
                 }
                 // Re-index everything
-                console.log('Re-indexing all conversations...');
-                await withProgress('Re-indexing conversations', () => indexConversations(undefined, undefined, concurrency, noSummaries));
+                await indexAll();
                 break;
             case 'index-all':
             default:
-                await withProgress('Indexing conversations', () => indexConversations(undefined, undefined, concurrency, noSummaries));
+                await indexAll();
                 break;
         }
     }

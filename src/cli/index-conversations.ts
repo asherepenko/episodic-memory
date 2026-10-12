@@ -59,7 +59,7 @@ COMMANDS:
   --rebuild      Delete DB and re-index everything (requires confirmation)
 
 OPTIONS:
-  --concurrency N    Parallel summarization (1-16, default: 1)
+  --concurrency N    Parallel summarization (1-16, default: 2)
   -c N               Short form of --concurrency
   --no-summaries     Skip AI summary generation (free, but no summaries in results)
   --help, -h         Show this help
