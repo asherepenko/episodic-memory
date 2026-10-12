@@ -4,6 +4,8 @@ import { initDatabase, insertExchange } from './db.js';
 import { parseConversation } from './parser.js';
 import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
+import { createUi, plural } from './cli-ui.js';
+import { fullProjectName } from './sync-report.js';
 import { getArchiveDir, getExcludedProjects, getConversationSourceDirs, findJsonlFiles, entryIsDirectory } from './paths.js';
 import { openConversationSyncStateStore, isRetriable, } from './sync/conversation-sync-state.js';
 /**
@@ -212,7 +214,29 @@ export async function indexConversations(limitToProject, maxConversations, concu
     console.log(`\n✅ Indexing complete! Conversations: ${conversationsProcessed}, Exchanges: ${totalExchanges}`);
 }
 export async function indexSession(sessionId, concurrency = 1, noSummaries = false) {
-    console.log(`Indexing session: ${sessionId}`);
+    const ui = createUi();
+    const startedAt = Date.now();
+    const id8 = sessionId.slice(0, 8);
+    const outcome = await ui.task(`indexing ${id8}...`, () => indexSessionWork(sessionId, noSummaries));
+    if (!outcome.found) {
+        ui.row('fail', id8, 'not found');
+        ui.sub('check the id, or run `episodic-memory sync` first');
+        ui.done(startedAt, ['0 sessions'], { ok: false });
+        return;
+    }
+    const label = `${fullProjectName(outcome.project ?? '')} · ${id8}`;
+    const details = [plural(outcome.exchanges, 'exchange')];
+    if (outcome.summary === 'summarized')
+        details.push('summarized');
+    if (outcome.summary === 'summary failed')
+        details.push('summary failed');
+    ui.row(outcome.summary === 'summary failed' ? 'warn' : 'new', label, details.join(' · '));
+    if (outcome.summaryError)
+        ui.sub(outcome.summaryError);
+    ui.done(startedAt, ['1 session']);
+}
+async function indexSessionWork(sessionId, noSummaries) {
+    const outcome = { found: false, exchanges: 0 };
     // Find the conversation file for this session
     const sourceDirs = getConversationSourceDirs();
     const ARCHIVE_DIR = getArchiveDir();
@@ -232,6 +256,8 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
             const files = findJsonlFiles(projectPath, excludedDirSet).filter(f => f.includes(sessionId));
             if (files.length > 0) {
                 found = true;
+                outcome.found = true;
+                outcome.project = project;
                 const file = files[0];
                 const sourcePath = path.join(projectPath, file);
                 const db = initDatabase();
@@ -260,12 +286,13 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
                             // and overwrites — benign, not a corrupt state.
                             store.clearFailure(archivePath);
                             store.save(archivePath, { kind: 'complete', lastUpdated: new Date().toISOString() });
-                            console.log(`Summary: ${summary.split(/\s+/).length} words`);
+                            outcome.summary = 'summarized';
                         }
                         catch (error) {
                             // Record the failure in SyncState so it is retryable on a later run (#96).
                             store.recordFailure(archivePath, error instanceof Error ? error.message : String(error));
-                            console.log(`Summary failed: ${error instanceof Error ? error.message : String(error)}`);
+                            outcome.summary = 'summary failed';
+                            outcome.summaryError = error instanceof Error ? error.message : String(error);
                         }
                     }
                     // Index
@@ -274,7 +301,7 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
                         const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
                         insertExchange(db, exchange, embedding, toolNames);
                     }
-                    console.log(`✅ Indexed session ${sessionId}: ${exchanges.length} exchanges`);
+                    outcome.exchanges = exchanges.length;
                 }
                 db.close();
                 break;
@@ -283,9 +310,7 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
         if (found)
             break;
     } // end sourceDir loop
-    if (!found) {
-        console.log(`Session ${sessionId} not found`);
-    }
+    return outcome;
 }
 export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
     console.log('Finding unprocessed conversations...');

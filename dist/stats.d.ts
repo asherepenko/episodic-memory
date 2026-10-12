@@ -1,3 +1,4 @@
+import { type Ui } from './cli-ui.js';
 export interface IndexStats {
     totalConversations: number;
     conversationsWithSummaries: number;
@@ -27,4 +28,9 @@ export interface IndexStats {
  */
 export declare function countPendingIndex(archiveDir: string, dbPath?: string): number | undefined;
 export declare function getIndexStats(dbPath?: string): Promise<IndexStats>;
+/** "Jan 12 → Oct 13, 2026", or with both years when the range spans years. */
+export declare function formatDateRange(earliest: string, latest: string): string;
+/** Draw the stats report through the shared UI kit. */
+export declare function renderStats(ui: Ui, stats: IndexStats): void;
+/** Plain-text rendering (no color, no animation); same layout as the terminal. */
 export declare function formatStats(stats: IndexStats): string;

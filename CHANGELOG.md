@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-10-13
+
+### Fixed
+- **Every conversation can get a summary now.** Summaries were only queued for transcripts still in `~/.claude` or `~/.codex` whose file name held a session id. Projects whose live transcripts Claude Code had deleted, and subagent conversations, were never summarized, no matter how often you synced. On one real index that was about half of the 61% without a summary. Summaries now come from the search index itself, so every indexed conversation is covered. `sync` works through the backlog newest first, up to 50 per run. To do the whole backlog at once, run `episodic-memory index --concurrency 8`; it has no count or time limit. Every summary is a Claude call, so a large backlog uses your subscription quota.
+- **Search no longer shows fake 100% matches, and results read top-down.** A result that matched only by keyword was shown as a 100% match, whatever its real relevance, and the list was ordered by a different score than the one shown. So 86% could sit above 100%. Keyword matches now show their real similarity, and results are sorted by the number you see. With the cross-encoder reranker on, the shown score is the reranker's, matching its order. `--min-score` is unchanged.
+
+### Changed
+- **Every command looks like `sync` and `index`.** `verify`, `repair`, `rebuild`, `stats`, `status`, `doctor`, `search`, `show` and `index --session` now use the same layout: bold sections, aligned rows with colored `✓ ⚠ ✗` instead of emoji, a spinner and progress bar for slow work, and a closing `done in 12s · …` line.
+  - `index --verify` replaces the endless "Checked 100 conversations..." lines with a progress bar and short lists. On a terminal, it offers to repair right away.
+  - `index --rebuild` asks y/N, or takes `--yes`, and waits for any running sync before it deletes anything.
+  - `doctor install` offers to restore missing files.
+  - `status` shows "Last sync 19m ago" and dates like "Jan 12 → Oct 13, 2026".
+  - Search hides the model-loading lines behind a spinner.
+  - Piped output, for example `search … | grep`, keeps the old format, so scripts don't break. The duplicate "Command failed with exit code 1" lines are gone; exit codes are unchanged.
+
 ## [1.8.0] - 2026-10-13
 
 ### Added

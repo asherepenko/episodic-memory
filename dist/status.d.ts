@@ -1,4 +1,5 @@
-import type { IndexStats } from './stats.js';
+import { type IndexStats } from './stats.js';
+import { type Ui } from './cli-ui.js';
 /**
  * Everything `status` needs, gathered by status-cli and passed in so the
  * report formatting stays pure and unit-testable (mirrors doctor.ts).
@@ -24,8 +25,10 @@ export interface StatusReport {
     ok: boolean;
 }
 /**
- * Build the at-a-glance health report. `ok` reflects the core engine
- * (native binding loads + database present) — index emptiness and pending
- * summaries are normal early states, not failures.
+ * Draw the at-a-glance health report. Returns `ok`, which reflects the core
+ * engine (native binding loads + database present) — index emptiness and
+ * pending summaries are normal early states, not failures.
  */
+export declare function renderStatus(ui: Ui, input: StatusInput): boolean;
+/** Plain-text rendering (no color, no animation); same layout as the terminal. */
 export declare function buildStatusReport(input: StatusInput): StatusReport;

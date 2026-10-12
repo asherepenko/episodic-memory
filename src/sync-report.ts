@@ -2,24 +2,11 @@ import os from 'os';
 import path from 'path';
 import type { SyncEvent } from './sync/index.js';
 import { setActiveProgress, type ProgressOutput } from './progress.js';
+import { ANSI, CLEAR_LINE, CURSOR_UP, FRAMES, FRAME_INTERVAL_MS, formatBar, formatDuration, num, plural, truncateMiddle, type Tone } from './cli-ui.js';
 
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const FRAME_INTERVAL_MS = 120;
-const CLEAR_LINE = '\r\u001b[2K';
-const CURSOR_UP = '\u001b[1A';
+export { formatBar, formatDuration };
+
 const NAME_WIDTH = 36;
-const BAR_WIDTH = 22;
-
-const ANSI = { yellow: 33, green: 32, cyan: 36, red: 31, bold: 1, dim: 2 } as const;
-type Tone = keyof typeof ANSI;
-
-/** Cut the middle: the head says where a project lives, the tail which one it is. */
-function truncateMiddle(name: string, width: number): string {
-  if (name.length <= width) return name;
-  const head = Math.ceil((width - 1) / 2);
-  const tail = width - 1 - head;
-  return name.slice(0, head) + '…' + name.slice(name.length - tail);
-}
 
 function firstLine(text: string, width: number): string {
   const line = text.split('\n')[0];
@@ -58,18 +45,6 @@ export function formatRow(index: number, total: number, name: string, symbol: st
   return `${counter(index, total)} ${name.padEnd(NAME_WIDTH)} ${symbol}  ${detail}`;
 }
 
-const num = (n: number) => n.toLocaleString('en-US');
-
-function plural(n: number, word: string): string {
-  return `${num(n)} ${word}${n === 1 ? '' : 's'}`;
-}
-
-export function formatDuration(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
 export interface SyncSummary {
   finished: boolean;
   ms: number;
@@ -89,11 +64,6 @@ export function formatSyncSummary(summary: SyncSummary): string {
   ];
   if (summary.errors > 0) parts.push(plural(summary.errors, 'error'));
   return parts.join(' · ');
-}
-
-export function formatBar(done: number, total: number): string {
-  const filled = total > 0 ? Math.min(BAR_WIDTH, Math.round((done / total) * BAR_WIDTH)) : BAR_WIDTH;
-  return '━'.repeat(filled) + '─'.repeat(BAR_WIDTH - filled);
 }
 
 function sessionLabel(file: string, project: string, home: string): string {

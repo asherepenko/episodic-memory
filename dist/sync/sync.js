@@ -165,11 +165,31 @@ function createArchiveIndexer(excludedDirSet) {
             onProgress?.(pending.length, pending.length);
             return out;
         },
+        async listConversations() {
+            const { db } = await open();
+            return db.prepare('SELECT DISTINCT archive_path FROM exchanges').all().map(r => r.archive_path);
+        },
         close() {
             state?.db.close();
             state = undefined;
         },
     };
+}
+/**
+ * Indexed conversations still waiting for a summary: not complete, file still
+ * on disk, not already queued, not excluded. Cheap checks only — the marker
+ * scan reads each file, so it runs later on just the files a run picks.
+ */
+export function collectSummaryBacklog(conversations, store, queued, isExcluded) {
+    const backlog = [];
+    for (const file of conversations) {
+        if (queued.has(file) || isExcluded(file) || !fs.existsSync(file))
+            continue;
+        const state = store.load(file);
+        if (state.kind !== 'complete')
+            backlog.push({ path: file, state });
+    }
+    return backlog;
 }
 export function extractSessionIdFromPath(filePath) {
     // Extract session ID from filename. Handles two formats:
@@ -194,6 +214,7 @@ export function createSyncSession(destDir, options = {}) {
     const excludedDirSet = new Set(getExcludedProjects());
     const indexer = createArchiveIndexer(excludedDirSet);
     const filesToSummarize = [];
+    const inExcludedProject = (file) => excludedDirSet.has(path.relative(destDir, file).split(path.sep)[0]);
     // Index everything in the project's archive dir that indexed_files lacks —
     // not just what was copied now. A run that dies between copy and index
     // (e.g. a broken native binding) is healed here on the next run.
@@ -235,10 +256,7 @@ export function createSyncSession(destDir, options = {}) {
                     }
                     // Check if this file needs a summary (whether newly copied or existing)
                     if (!options.skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
-                        const sessionId = extractSessionIdFromPath(destFile);
-                        if (sessionId) {
-                            filesToSummarize.push({ path: destFile, sessionId, state });
-                        }
+                        filesToSummarize.push({ path: destFile, state });
                     }
                 }
                 catch (error) {
@@ -258,7 +276,18 @@ export function createSyncSession(destDir, options = {}) {
             return outcome;
         },
         async summarize() {
-            if (options.skipSummaries || filesToSummarize.length === 0)
+            if (options.skipSummaries)
+                return;
+            // Plus every indexed conversation still unsummarized — archive-only
+            // projects and subagent files never pass through syncProject's queue.
+            try {
+                const queued = new Set(filesToSummarize.map(f => f.path));
+                filesToSummarize.push(...collectSummaryBacklog(await indexer.listConversations(), store, queued, inExcludedProject));
+            }
+            catch (error) {
+                log.warn(`Could not read the summary backlog: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            if (filesToSummarize.length === 0)
                 return;
             const { parseConversation } = await import('../parser.js');
             const { summarizeConversation } = await import('../summarizer.js');
@@ -270,7 +299,17 @@ export function createSyncSession(destDir, options = {}) {
                 log.info(`Skipping ${skippedPoison} file(s) that exceeded ${MAX_ATTEMPTS} retries (set EPISODIC_MEMORY_RETRY_ALL=1 to retry).`);
             }
             const summaryLimit = options.summaryLimit ?? DEFAULT_SUMMARY_LIMIT;
-            const toSummarize = orderNewestFirst(eligible).slice(0, summaryLimit);
+            const toSummarize = [];
+            for (const file of orderNewestFirst(eligible)) {
+                if (toSummarize.length >= summaryLimit)
+                    break;
+                // Backlog entries skipped the marker scan; do it now, only for picks.
+                if (shouldSkipConversation(file.path)) {
+                    store.save(file.path, { kind: 'complete', lastUpdated: new Date().toISOString() });
+                    continue;
+                }
+                toSummarize.push(file);
+            }
             const budgetMs = resolveSummaryBudgetMs(options.summaryBudgetMs, process.env.EPISODIC_MEMORY_SUMMARY_BUDGET_SEC);
             const budgetStartedAt = Date.now();
             const remaining = eligible.length - toSummarize.length;

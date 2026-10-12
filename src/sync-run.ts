@@ -7,13 +7,12 @@ import { initDatabase } from './db.js';
 import { generateExchangeEmbedding, initEmbeddings } from './embeddings.js';
 import { runMigrationBatch, countStale } from './embedding-migration.js';
 import path from 'path';
-import os from 'os';
+import { tildify } from './cli-ui.js';
 import fs from 'fs';
 import { formatLogLine, getSyncLogPath } from './logging.js';
 import { acquireFileLock, readLockHolder, releaseFileLock } from './file-lock.js';
 import { createSyncReporter, formatSyncSummary, fullProjectName } from './sync-report.js';
 
-export const tildify = (p: string) => (p.startsWith(os.homedir()) ? '~' + p.slice(os.homedir().length) : p);
 
 /**
  * Take the single-instance sync lock (#97) and release it on every exit.

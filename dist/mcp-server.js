@@ -7453,6 +7453,195 @@ var init_db = __esm({
   }
 });
 
+// src/progress.ts
+function setActiveProgress(progress) {
+  activeProgress = progress;
+}
+var activeProgress;
+var init_progress = __esm({
+  "src/progress.ts"() {
+    "use strict";
+  }
+});
+
+// src/cli-ui.ts
+import { createInterface } from "readline";
+function plural(n, word, many = `${word}s`) {
+  return `${num(n)} ${n === 1 ? word : many}`;
+}
+function formatDuration(ms) {
+  const s = Math.round(ms / 1e3);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+function formatBar(done, total) {
+  const filled = total > 0 ? Math.min(BAR_WIDTH, Math.round(done / total * BAR_WIDTH)) : BAR_WIDTH;
+  return "\u2501".repeat(filled) + "\u2500".repeat(BAR_WIDTH - filled);
+}
+function createUi(options = {}) {
+  const out = options.out ?? process.stdout;
+  const live = options.live ?? process.stderr;
+  const liveTty = Boolean(live.isTTY);
+  const color = options.color ?? (Boolean(out.isTTY) && !process.env.NO_COLOR);
+  const interactive = options.interactive ?? Boolean(process.stdin.isTTY && out.isTTY);
+  const now = options.now ?? Date.now;
+  const paint = (tone, text) => color ? `\x1B[${ANSI[tone]}m${text}\x1B[0m` : text;
+  let spinner;
+  let liveHeight = 0;
+  let frame = 0;
+  let timer;
+  const liveLines = () => {
+    if (!spinner) return [];
+    const lines = [`  ${paint("yellow", `${FRAMES[frame]}  ${spinner.label}`)}`];
+    if (spinner.of > 0) {
+      lines.push(`${paint("dim", formatBar(spinner.done, spinner.of))}  ${num(spinner.done)}/${num(spinner.of)} \xB7 ${formatDuration(now() - spinner.startedAt)}`);
+    }
+    return lines;
+  };
+  const clearLive = () => {
+    if (!liveTty || liveHeight === 0) return;
+    let seq = "";
+    for (let i = 1; i < liveHeight; i++) seq += CLEAR_LINE + CURSOR_UP;
+    live.write(seq + CLEAR_LINE);
+    liveHeight = 0;
+  };
+  const render = () => {
+    if (!liveTty) return;
+    clearLive();
+    const lines = liveLines();
+    if (lines.length === 0) return;
+    live.write(lines.join("\n"));
+    liveHeight = lines.length;
+  };
+  const line = (text = "") => {
+    clearLive();
+    out.write(`${text}
+`);
+    render();
+  };
+  const pad = (label) => label.padEnd(LABEL_WIDTH);
+  return {
+    color,
+    interactive,
+    paint,
+    line,
+    heading(text) {
+      line();
+      line(paint("bold", text));
+    },
+    row(status, label, detail) {
+      const { char, tone } = SYMBOLS[status];
+      line(`  ${paint(tone, char)}  ${detail === void 0 ? label : `${pad(label)} ${detail}`}`.trimEnd());
+    },
+    field(label, value) {
+      line(`     ${pad(label)} ${value}`);
+    },
+    sub(text) {
+      line(`     ${paint("dim", `\u2514 ${text}`)}`);
+    },
+    async task(label, work) {
+      spinner = { label, done: 0, of: 0, startedAt: now() };
+      frame = 0;
+      if (liveTty) {
+        setActiveProgress({ writeLine: (message) => line(message) });
+        timer = setInterval(() => {
+          frame = (frame + 1) % FRAMES.length;
+          render();
+        }, FRAME_INTERVAL_MS);
+        timer.unref?.();
+        render();
+      }
+      try {
+        return await work({
+          update(done, of, next) {
+            if (!spinner) return;
+            spinner.done = done;
+            spinner.of = of;
+            if (next !== void 0) spinner.label = next;
+            render();
+          }
+        });
+      } finally {
+        if (timer) clearInterval(timer);
+        timer = void 0;
+        spinner = void 0;
+        clearLive();
+        if (liveTty) setActiveProgress(void 0);
+      }
+    },
+    done(startedAt, parts, opts = {}) {
+      const ok = opts.ok ?? true;
+      const verb = opts.verb ?? (ok ? "done" : "failed");
+      const bar = paint(ok ? "green" : "red", formatBar(1, 1));
+      line();
+      line([`${bar}  ${verb} in ${formatDuration(now() - startedAt)}`, ...parts].join(" \xB7 "));
+    },
+    async confirm(question, fallback = false) {
+      if (!interactive) return fallback;
+      clearLive();
+      const rl = createInterface({ input: process.stdin, output: out });
+      const hint = fallback ? "[Y/n]" : "[y/N]";
+      const answer = await new Promise((resolve) => rl.question(`${question} ${paint("dim", hint)} `, resolve));
+      rl.close();
+      const a = answer.trim().toLowerCase();
+      if (a === "") return fallback;
+      return a === "y" || a === "yes";
+    }
+  };
+}
+var FRAMES, FRAME_INTERVAL_MS, CLEAR_LINE, CURSOR_UP, BAR_WIDTH, LABEL_WIDTH, ANSI, num, SYMBOLS;
+var init_cli_ui = __esm({
+  "src/cli-ui.ts"() {
+    "use strict";
+    init_progress();
+    FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
+    FRAME_INTERVAL_MS = 120;
+    CLEAR_LINE = "\r\x1B[2K";
+    CURSOR_UP = "\x1B[1A";
+    BAR_WIDTH = 22;
+    LABEL_WIDTH = 18;
+    ANSI = { yellow: 33, green: 32, cyan: 36, red: 31, bold: 1, dim: 2 };
+    num = (n) => n.toLocaleString("en-US");
+    SYMBOLS = {
+      ok: { char: "\u2713", tone: "green" },
+      warn: { char: "\u26A0", tone: "yellow" },
+      fail: { char: "\u2717", tone: "red" },
+      new: { char: "\u2193", tone: "cyan" },
+      info: { char: "\xB7", tone: "dim" }
+    };
+  }
+});
+
+// src/sync-report.ts
+import os3 from "os";
+function fullProjectName(project, home = os3.homedir()) {
+  const encodedHome = home.replace(/[\\/]/g, "-");
+  if (project === "-") return "/";
+  if (project === encodedHome) return "~";
+  if (project.startsWith(encodedHome + "-")) {
+    let name = project.slice(encodedHome.length + 1);
+    if (name.startsWith("Projects-")) name = name.slice("Projects-".length);
+    return name.startsWith("-") ? "." + name.slice(1) : name;
+  }
+  return project.startsWith("-") ? project.slice(1) : project;
+}
+var init_sync_report = __esm({
+  "src/sync-report.ts"() {
+    "use strict";
+    init_progress();
+    init_cli_ui();
+  }
+});
+
+// src/version.ts
+var VERSION;
+var init_version = __esm({
+  "src/version.ts"() {
+    "use strict";
+    VERSION = "1.9.0";
+  }
+});
+
 // src/summary-sentinel.ts
 var summary_sentinel_exports = {};
 __export(summary_sentinel_exports, {
@@ -7554,8 +7743,10 @@ var init_embedding_migration = __esm({
 var stats_exports = {};
 __export(stats_exports, {
   countPendingIndex: () => countPendingIndex,
+  formatDateRange: () => formatDateRange,
   formatStats: () => formatStats,
-  getIndexStats: () => getIndexStats
+  getIndexStats: () => getIndexStats,
+  renderStats: () => renderStats
 });
 import fs5 from "fs";
 import path7 from "path";
@@ -7656,73 +7847,76 @@ async function getIndexStats(dbPath) {
     db.close();
   }
 }
-function formatStats(stats) {
-  let output = "Episodic Memory Index Statistics\n";
-  output += "=".repeat(50) + "\n\n";
-  output += `Search Index
-`;
-  output += `  Conversations: ${stats.totalConversations.toLocaleString()}
-`;
-  output += `  Exchanges: ${stats.totalExchanges.toLocaleString()}
-`;
+function formatDateRange(earliest, latest) {
+  const a = new Date(earliest);
+  const b2 = new Date(latest);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b2.getTime())) return `${earliest} \u2192 ${latest}`;
+  const sameYear = a.getFullYear() === b2.getFullYear();
+  const from = a.toLocaleDateString("en-US", sameYear ? MONTH_DAY : MONTH_DAY_YEAR);
+  return `${from} \u2192 ${b2.toLocaleDateString("en-US", MONTH_DAY_YEAR)}`;
+}
+function renderStats(ui, stats) {
+  ui.line(`${ui.paint("bold", "Episodic Memory")} ${ui.paint("dim", `v${VERSION} \xB7 index statistics`)}`);
+  ui.heading("Search Index");
+  ui.field("Conversations", num(stats.totalConversations));
+  ui.field("Exchanges", num(stats.totalExchanges));
+  if (stats.dateRange) ui.field("Date range", formatDateRange(stats.dateRange.earliest, stats.dateRange.latest));
+  ui.field("Projects", num(stats.projectCount));
   if (stats.pendingIndex !== void 0) {
-    output += stats.pendingIndex === 0 ? `  Waiting to index: 0 (all archived transcripts indexed)
-` : `  Waiting to index: ${stats.pendingIndex.toLocaleString()} transcript(s) \u2014 run: episodic-memory sync
-`;
-  }
-  output += "\n";
-  output += `Summaries (captions on search results; search works without them)
-`;
-  output += `  With Summaries: ${stats.conversationsWithSummaries.toLocaleString()}
-`;
-  output += `  Without Summaries: ${stats.conversationsWithoutSummaries.toLocaleString()}`;
-  if (stats.conversationsWithoutSummaries > 0 && stats.totalConversations > 0) {
-    const percentage = (stats.conversationsWithoutSummaries / stats.totalConversations * 100).toFixed(1);
-    output += ` (${percentage}%)`;
-  }
-  output += "\n\n";
-  if (stats.dateRange) {
-    output += `Date Range:
-`;
-    output += `  Earliest: ${new Date(stats.dateRange.earliest).toLocaleDateString()}
-`;
-    output += `  Latest: ${new Date(stats.dateRange.latest).toLocaleDateString()}
-
-`;
-  }
-  output += `Unique Projects: ${stats.projectCount.toLocaleString()}
-
-`;
-  if (stats.staleEmbeddings && stats.staleEmbeddings > 0) {
-    output += `Stale Embeddings: ${stats.staleEmbeddings.toLocaleString()} exchange(s) on an old model
-`;
-    output += `  (re-embedded incrementally on each sync)
-
-`;
-  }
-  if (stats.poisonConversations && stats.poisonConversations > 0) {
-    output += `Permanently Skipped: ${stats.poisonConversations.toLocaleString()} conversation(s) after repeated summary failures
-`;
-    output += `  (retry with EPISODIC_MEMORY_RETRY_ALL=1 episodic-memory sync)
-
-`;
-  }
-  if (stats.topProjects && stats.topProjects.length > 0) {
-    output += `Top Projects by Conversation Count:
-`;
-    for (const { project, count } of stats.topProjects) {
-      const displayProject = project || "(unknown)";
-      output += `  ${count.toString().padStart(4)} - ${displayProject}
-`;
+    if (stats.pendingIndex === 0) {
+      ui.row("ok", "Waiting to index", "0 (all archived transcripts indexed)");
+    } else {
+      ui.row("warn", "Waiting to index", plural(stats.pendingIndex, "transcript"));
+      ui.sub("run: episodic-memory sync");
     }
   }
-  return output;
+  ui.heading("Summaries");
+  ui.field("With summaries", num(stats.conversationsWithSummaries));
+  let without = num(stats.conversationsWithoutSummaries);
+  if (stats.conversationsWithoutSummaries > 0 && stats.totalConversations > 0) {
+    without += ` (${(stats.conversationsWithoutSummaries / stats.totalConversations * 100).toFixed(1)}%)`;
+  }
+  ui.field("Without summaries", without);
+  ui.sub("captions on search results; search works without them");
+  const stale = stats.staleEmbeddings ?? 0;
+  const poison = stats.poisonConversations ?? 0;
+  if (stale > 0 || poison > 0) {
+    ui.heading("Health");
+    if (stale > 0) {
+      ui.row("warn", "Stale embeddings", `${plural(stale, "exchange")} on an old model`);
+      ui.sub("re-embedded incrementally on each sync");
+    }
+    if (poison > 0) {
+      ui.row("warn", "Permanently skipped", `${plural(poison, "conversation")} after repeated summary failures`);
+      ui.sub("retry with: EPISODIC_MEMORY_RETRY_ALL=1 episodic-memory sync");
+    }
+  }
+  if (stats.topProjects && stats.topProjects.length > 0) {
+    ui.heading("Top Projects by Conversation Count");
+    const width = Math.max(...stats.topProjects.map((p) => num(p.count).length));
+    for (const { project, count } of stats.topProjects) {
+      const name = project ? fullProjectName(project) : "(unknown)";
+      ui.line(`  ${num(count).padStart(width)}  ${name}`);
+    }
+  }
 }
+function formatStats(stats) {
+  const chunks = [];
+  renderStats(createUi({ out: { write: (s) => chunks.push(s) }, live: { write: () => {
+  } }, color: false }), stats);
+  return chunks.join("");
+}
+var MONTH_DAY, MONTH_DAY_YEAR;
 var init_stats = __esm({
   "src/stats.ts"() {
     "use strict";
     init_paths();
     init_db();
+    init_cli_ui();
+    init_sync_report();
+    init_version();
+    MONTH_DAY = { month: "short", day: "numeric" };
+    MONTH_DAY_YEAR = { month: "short", day: "numeric", year: "numeric" };
   }
 });
 
@@ -25733,6 +25927,9 @@ function validateISODate(dateStr, paramName) {
   }
 }
 function reciprocalRankFusion(lists, limit, k = 60) {
+  return reciprocalRankFusionScored(lists, limit, k).map((x2) => x2.row);
+}
+function reciprocalRankFusionScored(lists, limit, k = 60) {
   const scores = /* @__PURE__ */ new Map();
   const rowById = /* @__PURE__ */ new Map();
   for (const list of lists) {
@@ -25741,7 +25938,10 @@ function reciprocalRankFusion(lists, limit, k = 60) {
       if (!rowById.has(row.id)) rowById.set(row.id, row);
     });
   }
-  return [...scores.entries()].sort((a, b2) => b2[1] - a[1]).slice(0, limit).map(([id]) => rowById.get(id));
+  return [...scores.entries()].sort((a, b2) => b2[1] - a[1]).slice(0, limit).map(([id, score]) => ({ row: rowById.get(id), score }));
+}
+function sigmoid(x2) {
+  return 1 / (1 + Math.exp(-x2));
 }
 async function searchConversations(query, options = {}) {
   const { limit = 10, mode = "both", after, before } = options;
@@ -25751,10 +25951,12 @@ async function searchConversations(query, options = {}) {
   if (before) validateISODate(before, "--before");
   const db = initDatabase();
   let results = [];
+  let queryVector;
   const { sql: filterClause, params: filterParams } = buildSearchFilters(options);
   if (mode === "vector" || mode === "both") {
     await initEmbeddings();
     const queryEmbedding = await generateQueryEmbedding(query);
+    queryVector = Buffer.from(new Float32Array(queryEmbedding).buffer);
     const k = hasMetadataFilters(options) ? retrieveLimit * 3 : retrieveLimit;
     const stmt = db.prepare(`
       SELECT
@@ -25769,10 +25971,10 @@ async function searchConversations(query, options = {}) {
       ORDER BY vec.distance ASC
     `);
     results = stmt.all(
-      Buffer.from(new Float32Array(queryEmbedding).buffer),
+      queryVector,
       k,
       ...filterParams
-    );
+    ).map((row) => ({ ...row, fromVector: true }));
     if (mode === "vector" && results.length > retrieveLimit) {
       results = results.slice(0, retrieveLimit);
     }
@@ -25791,10 +25993,16 @@ async function searchConversations(query, options = {}) {
     `);
     const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, retrieveLimit);
     if (mode === "both") {
-      results = reciprocalRankFusion(
-        [results, textResults],
-        retrieveLimit
-      );
+      const lists = [results, textResults];
+      results = reciprocalRankFusion(lists, retrieveLimit);
+      const textOnly = results.filter((row) => !row.fromVector);
+      if (textOnly.length > 0 && queryVector) {
+        const distanceStmt = db.prepare(`SELECT vec_distance_l2(embedding, ?) AS distance FROM vec_exchanges WHERE id = ?`);
+        for (const row of textOnly) {
+          const hit = distanceStmt.get(queryVector, row.id);
+          row.distance = hit ? hit.distance : void 0;
+        }
+      }
     } else {
       results = textResults;
     }
@@ -25809,25 +26017,30 @@ async function searchConversations(query, options = {}) {
     }
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
+    const similarity = mode === "text" || typeof row.distance !== "number" ? void 0 : EMBEDDER.distanceToSimilarity(row.distance);
     return {
       exchange,
-      similarity: mode === "text" ? void 0 : EMBEDDER.distanceToSimilarity(row.distance),
+      similarity,
+      textOnly: mode === "both" && !row.fromVector,
       snippet,
       summary
     };
   });
+  if (mode === "both") {
+    mapped.sort((a, b2) => (b2.similarity ?? -Infinity) - (a.similarity ?? -Infinity));
+  }
   let out = mapped;
   if (options.minScore !== void 0) {
-    out = out.filter((r) => r.similarity === void 0 || r.similarity >= options.minScore);
+    out = out.filter((r) => r.textOnly || r.similarity === void 0 || r.similarity >= options.minScore);
   }
   if (rerankOn && out.length > 1) {
     const passages = out.map((r) => `User: ${r.exchange.userMessage}
 
 Assistant: ${r.exchange.assistantMessage}`);
     const scores = await rerankScores(query, passages);
-    out = out.map((r, i) => ({ r, score: scores[i] ?? -Infinity })).sort((a, b2) => b2.score - a.score).map((x2) => x2.r);
+    out = out.map((r, i) => ({ r, score: scores[i] ?? -Infinity })).sort((a, b2) => b2.score - a.score).map((x2) => ({ ...x2.r, similarity: Number.isFinite(x2.score) ? sigmoid(x2.score) : 0 }));
   }
-  return out.slice(0, limit);
+  return out.slice(0, limit).map(({ textOnly: _textOnly, ...r }) => r);
 }
 async function countLines(filePath) {
   try {
@@ -27636,10 +27849,8 @@ ${result}
   return output;
 }
 
-// src/version.ts
-var VERSION = "1.8.0";
-
 // src/mcp-server.ts
+init_version();
 init_paths();
 import fs7 from "fs";
 import path8 from "path";

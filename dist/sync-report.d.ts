@@ -1,5 +1,7 @@
 import type { SyncEvent } from './sync/index.js';
 import { type ProgressOutput } from './progress.js';
+import { formatBar, formatDuration } from './cli-ui.js';
+export { formatBar, formatDuration };
 /**
  * Claude encodes a project's cwd as its dir name ("/" → "-"). Strip the home
  * dir and a leading Projects- so rows show "auto-claude", not
@@ -8,7 +10,6 @@ import { type ProgressOutput } from './progress.js';
 export declare function fullProjectName(project: string, home?: string): string;
 export declare function displayProjectName(project: string, home?: string): string;
 export declare function formatRow(index: number, total: number, name: string, symbol: string, detail: string): string;
-export declare function formatDuration(ms: number): string;
 export interface SyncSummary {
     finished: boolean;
     ms: number;
@@ -19,7 +20,6 @@ export interface SyncSummary {
 }
 /** The closing line: "done in 40s · 6 new transcripts · 13 exchanges indexed · 2 summarized". */
 export declare function formatSyncSummary(summary: SyncSummary): string;
-export declare function formatBar(done: number, total: number): string;
 export interface SyncReporterOptions {
     color?: boolean;
     home?: string;

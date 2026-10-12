@@ -1,21 +1,9 @@
 import os from 'os';
 import path from 'path';
 import { setActiveProgress } from './progress.js';
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const FRAME_INTERVAL_MS = 120;
-const CLEAR_LINE = '\r\u001b[2K';
-const CURSOR_UP = '\u001b[1A';
+import { ANSI, CLEAR_LINE, CURSOR_UP, FRAMES, FRAME_INTERVAL_MS, formatBar, formatDuration, num, plural, truncateMiddle } from './cli-ui.js';
+export { formatBar, formatDuration };
 const NAME_WIDTH = 36;
-const BAR_WIDTH = 22;
-const ANSI = { yellow: 33, green: 32, cyan: 36, red: 31, bold: 1, dim: 2 };
-/** Cut the middle: the head says where a project lives, the tail which one it is. */
-function truncateMiddle(name, width) {
-    if (name.length <= width)
-        return name;
-    const head = Math.ceil((width - 1) / 2);
-    const tail = width - 1 - head;
-    return name.slice(0, head) + '…' + name.slice(name.length - tail);
-}
 function firstLine(text, width) {
     const line = text.split('\n')[0];
     return line.length <= width ? line : line.slice(0, width - 1) + '…';
@@ -51,16 +39,6 @@ function counter(index, total) {
 export function formatRow(index, total, name, symbol, detail) {
     return `${counter(index, total)} ${name.padEnd(NAME_WIDTH)} ${symbol}  ${detail}`;
 }
-const num = (n) => n.toLocaleString('en-US');
-function plural(n, word) {
-    return `${num(n)} ${word}${n === 1 ? '' : 's'}`;
-}
-export function formatDuration(ms) {
-    const s = Math.round(ms / 1000);
-    if (s < 60)
-        return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
 /** The closing line: "done in 40s · 6 new transcripts · 13 exchanges indexed · 2 summarized". */
 export function formatSyncSummary(summary) {
     const parts = [
@@ -72,10 +50,6 @@ export function formatSyncSummary(summary) {
     if (summary.errors > 0)
         parts.push(plural(summary.errors, 'error'));
     return parts.join(' · ');
-}
-export function formatBar(done, total) {
-    const filled = total > 0 ? Math.min(BAR_WIDTH, Math.round((done / total) * BAR_WIDTH)) : BAR_WIDTH;
-    return '━'.repeat(filled) + '─'.repeat(BAR_WIDTH - filled);
 }
 function sessionLabel(file, project, home) {
     const base = path.basename(file, '.jsonl');

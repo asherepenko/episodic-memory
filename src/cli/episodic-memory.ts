@@ -20,7 +20,8 @@ function runScript(scriptPath: string, scriptArgs: string[]): Promise<void> {
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`Command failed with exit code ${code}`));
+        // The command already printed its own report; pass the code through quietly.
+        process.exit(code ?? 1);
       }
     });
 

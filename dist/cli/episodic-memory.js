@@ -17,7 +17,8 @@ function runScript(scriptPath, scriptArgs) {
                 resolve();
             }
             else {
-                reject(new Error(`Command failed with exit code ${code}`));
+                // The command already printed its own report; pass the code through quietly.
+                process.exit(code ?? 1);
             }
         });
         child.on('error', (err) => {

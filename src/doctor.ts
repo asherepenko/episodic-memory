@@ -4,6 +4,7 @@ import {
   versionMeetsMinimum,
 } from './codex-support.js';
 import type { CodexHookTrustState } from './codex-hook-trust.js';
+import { createUi, tildify, type Ui } from './cli-ui.js';
 
 export interface CodexDoctorInputs {
   codexVersionOutput: string;
@@ -46,22 +47,46 @@ function parseMcpState(mcpListOutput: string): 'enabled' | 'disabled' | 'missing
   return line.includes(' enabled') ? 'enabled' : 'disabled';
 }
 
-function formatHookTrustState(hookTrustState: CodexHookTrustState): string {
-  switch (hookTrustState) {
+/** Short detail for the hook-trust row plus the fix hint shown under it. */
+function hookTrustRow(state: CodexHookTrustState): { status: 'ok' | 'fail'; detail: string; hint?: string } {
+  switch (state) {
     case 'trusted':
-      return 'trusted';
+      return { status: 'ok', detail: 'trusted' };
     case 'untrusted':
-      return 'untrusted; open /hooks in Codex, review the Episodic Memory hook, and press t to trust it.';
+      return {
+        status: 'fail',
+        detail: 'untrusted',
+        hint: 'open /hooks in Codex, review the Episodic Memory hook, and press t to trust it',
+      };
     case 'modified':
-      return 'modified since it was trusted; open /hooks in Codex, review the Episodic Memory hook, and press t to trust it again.';
+      return {
+        status: 'fail',
+        detail: 'modified since it was trusted',
+        hint: 'open /hooks in Codex, review the Episodic Memory hook, and press t to trust it again',
+      };
     case 'not_found':
-      return 'not found; confirm the Episodic Memory plugin is installed and enabled.';
+      return {
+        status: 'fail',
+        detail: 'not found',
+        hint: 'confirm the Episodic Memory plugin is installed and enabled',
+      };
     case 'unknown':
-      return 'unknown; could not inspect Codex hooks. Open /hooks in Codex to verify trust.';
+      return {
+        status: 'fail',
+        detail: 'unknown',
+        hint: 'could not inspect Codex hooks; open /hooks in Codex to verify trust',
+      };
   }
 }
 
-export function buildCodexDoctorReport(inputs: CodexDoctorInputs): DoctorReport {
+export interface DoctorCounts {
+  checks: number;
+  warnings: number;
+  failures: number;
+}
+
+/** Draw the Codex checks with the shared UI kit and return the tallies. */
+export function renderCodexDoctor(ui: Ui, inputs: CodexDoctorInputs): DoctorCounts {
   const version = parseCodexCliVersion(inputs.codexVersionOutput);
   const versionOk = version !== undefined && versionMeetsMinimum(version);
   const legacyHookLine = inputs.featuresOutput.split(/\r?\n/)
@@ -72,55 +97,67 @@ export function buildCodexDoctorReport(inputs: CodexDoctorInputs): DoctorReport 
   const pluginsEnabled = parseFeatureState(inputs.featuresOutput, 'plugins');
   const mcpState = parseMcpState(inputs.mcpListOutput);
 
-  const issues: string[] = [];
-  if (!versionOk) {
-    issues.push(`Codex must be upgraded with codex update (minimum ${MIN_CODEX_VERSION}).`);
-  }
-  if (pluginsEnabled === false) {
-    issues.push('Codex plugins are disabled; run codex features enable plugins.');
-  }
-  if (pluginHooksEnabled !== true) {
-    issues.push(`Codex plugin hooks are not enabled; run codex features enable ${hookFeature}.`);
-  }
-  if (!inputs.sessionsDirExists) {
-    issues.push('Codex sessions directory does not exist yet; start at least one Codex session.');
-  }
-  if (mcpState !== 'enabled') {
-    issues.push('Episodic Memory MCP server is not enabled in codex mcp list.');
-  }
-  if (inputs.hookTrustState === 'untrusted' || inputs.hookTrustState === 'modified') {
-    issues.push('Episodic Memory Codex hook is not trusted; open /hooks in Codex and press t to trust it.');
-  } else if (inputs.hookTrustState === 'not_found') {
-    issues.push('Episodic Memory Codex hook was not found; confirm the plugin is installed and enabled.');
-  } else if (inputs.hookTrustState === 'unknown') {
-    issues.push('Episodic Memory Codex hook trust could not be verified.');
-  }
-
-  const lines = [
-    'Episodic Memory Codex Doctor',
-    '================================',
-    '',
-    `Codex version: ${inputs.codexVersionOutput.trim() || '(not found)'} ${versionOk ? `(ok; minimum ${MIN_CODEX_VERSION})` : `(requires minimum ${MIN_CODEX_VERSION})`}`,
-    `Codex home: ${inputs.codexHome}`,
-    `Codex sessions: ${inputs.sessionsDirExists ? 'found' : 'missing'}`,
-    `Plugins feature: ${pluginsEnabled === true ? 'enabled' : pluginsEnabled === false ? 'disabled' : 'unknown'}`,
-    `Plugin hooks feature${hookFeature === 'hooks' ? ' (hooks)' : ''}: ${pluginHooksEnabled === true ? 'enabled' : pluginHooksEnabled === false ? 'disabled' : 'unknown'}`,
-    `Episodic Memory MCP: ${mcpState}`,
-    `Index database: ${inputs.dbPath}`,
-    `Hook/background sync log: ${inputs.logPath}`,
-    '',
-    `Hook trust: ${formatHookTrustState(inputs.hookTrustState)}`,
-  ];
-
-  if (issues.length > 0) {
-    lines.push('', 'Issues:');
-    for (const issue of issues) {
-      lines.push(`- ${issue}`);
-    }
-  }
-
-  return {
-    ok: issues.length === 0,
-    text: `${lines.join('\n')}\n`,
+  const counts: DoctorCounts = { checks: 0, warnings: 0, failures: 0 };
+  const row = (status: 'ok' | 'warn' | 'fail' | 'info', label: string, detail: string, hint?: string) => {
+    if (status === 'ok') counts.checks++;
+    else if (status === 'warn') counts.warnings++;
+    else if (status === 'fail') counts.failures++;
+    ui.row(status, label, detail);
+    if (hint) ui.sub(hint);
   };
+  const featureState = (value: boolean | undefined) =>
+    value === true ? 'enabled' : value === false ? 'disabled' : 'unknown';
+
+  ui.heading('Codex');
+  const versionText = inputs.codexVersionOutput.trim() || '(not found)';
+  if (versionOk) {
+    row('ok', 'Version', `${versionText} (minimum ${MIN_CODEX_VERSION})`);
+  } else {
+    row('fail', 'Version', `${versionText} (requires minimum ${MIN_CODEX_VERSION})`,
+      `upgrade Codex with codex update (minimum ${MIN_CODEX_VERSION})`);
+  }
+  ui.field('Home', tildify(inputs.codexHome));
+  if (inputs.sessionsDirExists) {
+    row('ok', 'Sessions', 'found');
+  } else {
+    row('fail', 'Sessions', 'missing', 'start at least one Codex session to create the sessions directory');
+  }
+
+  ui.heading('Features');
+  if (pluginsEnabled === false) {
+    row('fail', 'Plugins', 'disabled', 'run codex features enable plugins');
+  } else {
+    row(pluginsEnabled === true ? 'ok' : 'info', 'Plugins', featureState(pluginsEnabled));
+  }
+  const hooksLabel = hookFeature === 'hooks' ? 'Plugin hooks' : 'Plugin hooks (legacy)';
+  if (pluginHooksEnabled === true) {
+    row('ok', hooksLabel, 'enabled');
+  } else {
+    row('fail', hooksLabel, featureState(pluginHooksEnabled), `run codex features enable ${hookFeature}`);
+  }
+
+  ui.heading('Episodic Memory');
+  if (mcpState === 'enabled') {
+    row('ok', 'MCP server', 'enabled');
+  } else {
+    row('fail', 'MCP server', mcpState, 'not enabled in codex mcp list');
+  }
+  const trust = hookTrustRow(inputs.hookTrustState);
+  row(trust.status, 'Hook trust', trust.detail, trust.hint);
+  ui.field('Index database', tildify(inputs.dbPath));
+  ui.field('Sync log', tildify(inputs.logPath));
+
+  return counts;
+}
+
+export function buildCodexDoctorReport(inputs: CodexDoctorInputs): DoctorReport {
+  let text = '';
+  const ui = createUi({
+    out: { write: chunk => { text += chunk; } },
+    live: { write: () => {} },
+    color: false,
+    interactive: false,
+  });
+  const counts = renderCodexDoctor(ui, inputs);
+  return { ok: counts.failures === 0, text };
 }

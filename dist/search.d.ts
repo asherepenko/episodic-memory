@@ -32,6 +32,13 @@ export declare function l2DistanceToCosineSimilarity(distance: number): number;
 export declare function reciprocalRankFusion<T extends {
     id: string;
 }>(lists: T[][], limit: number, k?: number): T[];
+/** Same as reciprocalRankFusion, but also returns each survivor's fused score. */
+export declare function reciprocalRankFusionScored<T extends {
+    id: string;
+}>(lists: T[][], limit: number, k?: number): Array<{
+    row: T;
+    score: number;
+}>;
 export declare function searchConversations(query: string, options?: SearchOptions): Promise<SearchResult[]>;
 /**
  * When a search returns nothing, distinguish "index still building" from a

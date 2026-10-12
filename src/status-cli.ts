@@ -6,7 +6,8 @@ import { openDatabase } from './db.js';
 import { countStale } from './embedding-migration.js';
 import { isNativeBindingError } from './native-binding.js';
 import { countSyncStates } from './sync/index.js';
-import { buildStatusReport } from './status.js';
+import { renderStatus, type StatusInput } from './status.js';
+import { createUi } from './cli-ui.js';
 
 const args = process.argv.slice(2);
 
@@ -30,6 +31,15 @@ const EMPTY_STATS: IndexStats = {
 };
 
 async function main(): Promise<void> {
+  const ui = createUi();
+  const startedAt = Date.now();
+  const input = await ui.task('reading index...', gather);
+  const ok = renderStatus(ui, input);
+  ui.done(startedAt, [ok ? 'engine healthy' : 'engine unhealthy'], { ok, verb: 'checked' });
+  process.exit(ok ? 0 : 1);
+}
+
+async function gather(): Promise<StatusInput> {
   const dbPath = getDbPath();
   const dbExists = fs.existsSync(dbPath);
 
@@ -76,7 +86,7 @@ async function main(): Promise<void> {
 
   const apiEnvSet = !!(process.env.ANTHROPIC_API_KEY || process.env.EPISODIC_MEMORY_API_BASE_URL);
 
-  const report = buildStatusReport({
+  return {
     dbPath,
     dbExists,
     nativeBindingOk,
@@ -87,10 +97,7 @@ async function main(): Promise<void> {
     apiEnvSet,
     lastSync,
     now: new Date().toISOString(),
-  });
-
-  process.stdout.write(report.text);
-  process.exit(report.ok ? 0 : 1);
+  };
 }
 
 main().catch(err => {

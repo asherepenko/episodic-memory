@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs';
+import { createUi } from './cli-ui.js';
 import { formatConversationAsMarkdown, formatConversationAsHTML } from './show.js';
 const args = process.argv.slice(2);
 // Parse arguments
@@ -35,10 +36,19 @@ EXAMPLES:
         filePath = arg;
     }
 }
+// Terminal-only chrome: piped/redirected output keeps the plain error text.
+const ui = createUi({ out: process.stderr });
+const chrome = Boolean(process.stderr.isTTY);
 if (!filePath) {
-    console.error('Error: No file specified');
-    console.error('Usage: episodic-memory show [OPTIONS] <file>');
-    console.error('Try: episodic-memory show --help');
+    if (chrome) {
+        ui.row('fail', 'No file specified');
+        ui.sub('usage: episodic-memory show [OPTIONS] <file>  (see --help)');
+    }
+    else {
+        console.error('Error: No file specified');
+        console.error('Usage: episodic-memory show [OPTIONS] <file>');
+        console.error('Try: episodic-memory show --help');
+    }
     process.exit(1);
 }
 try {
@@ -51,6 +61,14 @@ try {
     }
 }
 catch (error) {
-    console.error(`Error reading file: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    if (chrome) {
+        const notFound = error?.code === 'ENOENT';
+        ui.row('fail', notFound ? 'File not found' : 'Could not read file', filePath);
+        ui.sub(notFound ? 'check the path; archived transcripts live under ~/.config/superpowers/conversation-archive/' : message);
+    }
+    else {
+        console.error(`Error reading file: ${message}`);
+    }
     process.exit(1);
 }

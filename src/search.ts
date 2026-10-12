@@ -147,6 +147,15 @@ export function reciprocalRankFusion<T extends { id: string }>(
   limit: number,
   k = 60,
 ): T[] {
+  return reciprocalRankFusionScored(lists, limit, k).map(x => x.row);
+}
+
+/** Same as reciprocalRankFusion, but also returns each survivor's fused score. */
+export function reciprocalRankFusionScored<T extends { id: string }>(
+  lists: T[][],
+  limit: number,
+  k = 60,
+): Array<{ row: T; score: number }> {
   const scores = new Map<string, number>();
   const rowById = new Map<string, T>();
   for (const list of lists) {
@@ -158,7 +167,12 @@ export function reciprocalRankFusion<T extends { id: string }>(
   return [...scores.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
-    .map(([id]) => rowById.get(id)!);
+    .map(([id, score]) => ({ row: rowById.get(id)!, score }));
+}
+
+/** Logistic squash of a cross-encoder logit into 0-1. */
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
 }
 
 export async function searchConversations(
@@ -177,6 +191,7 @@ export async function searchConversations(
   const db = initDatabase();
 
   let results: any[] = [];
+  let queryVector: Buffer | undefined;
 
   const { sql: filterClause, params: filterParams } = buildSearchFilters(options);
 
@@ -186,6 +201,7 @@ export async function searchConversations(
     // active we ask for more candidates than `limit` and trim afterwards.
     await initEmbeddings();
     const queryEmbedding = await generateQueryEmbedding(query);
+    queryVector = Buffer.from(new Float32Array(queryEmbedding).buffer);
     const k = hasMetadataFilters(options) ? retrieveLimit * 3 : retrieveLimit;
 
     const stmt = db.prepare(`
@@ -202,10 +218,10 @@ export async function searchConversations(
     `);
 
     results = stmt.all(
-      Buffer.from(new Float32Array(queryEmbedding).buffer),
+      queryVector,
       k,
       ...filterParams
-    );
+    ).map((row: any) => ({ ...row, fromVector: true }));
     // In 'both' mode keep the full candidate list for rank fusion below; only
     // trim for vector-only mode.
     if (mode === 'vector' && results.length > retrieveLimit) {
@@ -232,10 +248,19 @@ export async function searchConversations(
     if (mode === 'both') {
       // Fuse the vector and text rankings (vector first = higher authority on
       // ties) instead of just appending text matches after every vector hit.
-      results = reciprocalRankFusion(
-        [results as Array<{ id: string }>, textResults as Array<{ id: string }>],
-        retrieveLimit,
-      );
+      // Fusion picks the candidates; the final order is by real similarity.
+      const lists = [results as Array<{ id: string }>, textResults as Array<{ id: string }>];
+      results = reciprocalRankFusion(lists, retrieveLimit);
+      // Text-only hits were selected with a placeholder distance; give them
+      // their real one from the stored vector so the shown % is honest.
+      const textOnly = results.filter((row: any) => !row.fromVector);
+      if (textOnly.length > 0 && queryVector) {
+        const distanceStmt = db.prepare(`SELECT vec_distance_l2(embedding, ?) AS distance FROM vec_exchanges WHERE id = ?`);
+        for (const row of textOnly as any[]) {
+          const hit = distanceStmt.get(queryVector, row.id) as { distance: number } | undefined;
+          row.distance = hit ? hit.distance : undefined;
+        }
+      }
     } else {
       results = textResults;
     }
@@ -259,34 +284,44 @@ export async function searchConversations(
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, ' ').trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? '...' : '');
 
+    const similarity = mode === 'text' || typeof row.distance !== 'number'
+      ? undefined
+      : EMBEDDER.distanceToSimilarity(row.distance);
     return {
       exchange,
-      similarity: mode === 'text' ? undefined : EMBEDDER.distanceToSimilarity(row.distance),
+      similarity,
+      textOnly: mode === 'both' && !row.fromVector,
       snippet,
       summary
-    } as SearchResult & { summary?: string };
+    } as SearchResult & { summary?: string; textOnly?: boolean };
   });
 
-  // Drop weak vector matches below the threshold. Text-only matches (no
-  // similarity score) are kept — a substring hit is an exact signal.
+  // Show and order by the same number: highest similarity first. Rows with
+  // no vector (none stored) go last. Stable, so ties keep fusion order.
+  if (mode === 'both') {
+    mapped.sort((a, b) => (b.similarity ?? -Infinity) - (a.similarity ?? -Infinity));
+  }
+
+  // Drop weak vector matches below the threshold. Text-only matches are kept
+  // whatever their similarity — a substring hit is an exact signal.
   let out = mapped;
   if (options.minScore !== undefined) {
-    out = out.filter(r => r.similarity === undefined || r.similarity >= options.minScore!);
+    out = out.filter(r => r.textOnly || r.similarity === undefined || r.similarity >= options.minScore!);
   }
 
   // Optional cross-encoder rerank over the larger retrieved pool, then keep the
   // top `limit`. Reorders by joint query/passage relevance; the displayed
-  // similarity stays the (semantic) cosine score.
+  // similarity becomes the reranker's relevance (sigmoid of its logit).
   if (rerankOn && out.length > 1) {
     const passages = out.map(r => `User: ${r.exchange.userMessage}\n\nAssistant: ${r.exchange.assistantMessage}`);
     const scores = await rerankScores(query, passages);
     out = out
       .map((r, i) => ({ r, score: scores[i] ?? -Infinity }))
       .sort((a, b) => b.score - a.score)
-      .map(x => x.r);
+      .map(x => ({ ...x.r, similarity: Number.isFinite(x.score) ? sigmoid(x.score) : 0 }));
   }
 
-  return out.slice(0, limit);
+  return out.slice(0, limit).map(({ textOnly: _textOnly, ...r }: any) => r as SearchResult);
 }
 
 // Helper function to count lines in a file efficiently

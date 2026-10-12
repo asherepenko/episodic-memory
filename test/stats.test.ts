@@ -144,21 +144,21 @@ describe('stats command', () => {
 
     it('renders stale-embedding and poison lines when present', () => {
       const out = formatStats({ ...base, staleEmbeddings: 42, poisonConversations: 3 });
-      expect(out).toContain('Stale Embeddings: 42 exchange(s) on an old model');
-      expect(out).toContain('Permanently Skipped: 3 conversation(s)');
+      expect(out).toContain('Stale embeddings   42 exchanges on an old model');
+      expect(out).toContain('Permanently skipped 3 conversations');
       expect(out).toContain('EPISODIC_MEMORY_RETRY_ALL=1');
     });
 
     it('omits both lines when zero or undefined', () => {
       const out = formatStats({ ...base, staleEmbeddings: 0 });
-      expect(out).not.toContain('Stale Embeddings:');
-      expect(out).not.toContain('Permanently Skipped:');
+      expect(out).not.toContain('Stale embeddings');
+      expect(out).not.toContain('Permanently skipped');
     });
 
     it('shows how many archived transcripts are waiting to be indexed', () => {
-      expect(formatStats({ ...base, pendingIndex: 0 })).toContain('Waiting to index: 0 (all archived transcripts indexed)');
+      expect(formatStats({ ...base, pendingIndex: 0 })).toContain('✓  Waiting to index   0 (all archived transcripts indexed)');
       const out = formatStats({ ...base, pendingIndex: 4656 });
-      expect(out).toContain('Waiting to index: 4,656 transcript(s)');
+      expect(out).toContain('⚠  Waiting to index   4,656 transcripts');
       expect(out).toContain('episodic-memory sync');
     });
   });

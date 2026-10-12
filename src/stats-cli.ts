@@ -1,4 +1,5 @@
-import { getIndexStats, formatStats, countPendingIndex } from './stats.js';
+import { getIndexStats, renderStats, countPendingIndex } from './stats.js';
+import { createUi, plural } from './cli-ui.js';
 import { countSyncStates } from './sync/index.js';
 import { getArchiveDir } from './paths.js';
 
@@ -25,23 +26,30 @@ EXAMPLES:
   process.exit(0);
 }
 
-getIndexStats()
-  .then(stats => {
+async function main(): Promise<void> {
+  const ui = createUi();
+  const startedAt = Date.now();
+  const stats = await ui.task('reading index...', async () => {
+    const result = await getIndexStats();
     // Poison count is filesystem-derived (archive sidecars), kept out of
     // getIndexStats so it stays DB-only and isolated under unit tests.
     try {
-      stats.poisonConversations = countSyncStates().poison;
+      result.poisonConversations = countSyncStates().poison;
     } catch {
       // archive dir may not exist before the first sync
     }
     try {
-      stats.pendingIndex = countPendingIndex(getArchiveDir());
+      result.pendingIndex = countPendingIndex(getArchiveDir());
     } catch {
       // unreadable archive — leave the line out
     }
-    console.log(formatStats(stats));
-  })
-  .catch(error => {
-    console.error('Error getting stats:', error);
-    process.exit(1);
+    return result;
   });
+  renderStats(ui, stats);
+  ui.done(startedAt, [plural(stats.totalConversations, 'conversation'), plural(stats.totalExchanges, 'exchange')], { verb: 'read' });
+}
+
+main().catch(error => {
+  console.error('Error getting stats:', error);
+  process.exit(1);
+});

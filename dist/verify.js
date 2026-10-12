@@ -3,7 +3,7 @@ import path from 'path';
 import { parseConversation } from './parser.js';
 import { initDatabase, getAllExchanges, getFileLastIndexed } from './db.js';
 import { getArchiveDir, getExcludedProjects, findJsonlFiles, entryIsDirectory } from './paths.js';
-export async function verifyIndex() {
+export async function verifyIndex(options = {}) {
     const result = {
         missing: [],
         orphaned: [],
@@ -22,66 +22,64 @@ export async function verifyIndex() {
     const excludedProjects = getExcludedProjects();
     const excludedDirSet = new Set(excludedProjects);
     let totalChecked = 0;
+    // List everything first so progress has a total.
+    const work = [];
     for (const projectEntry of fs.readdirSync(archiveDir, { withFileTypes: true })) {
         if (!entryIsDirectory(archiveDir, projectEntry))
             continue;
         const project = projectEntry.name;
-        if (excludedProjects.includes(project)) {
-            console.log("\nSkipping excluded project: " + project);
+        if (excludedProjects.includes(project))
+            continue;
+        const projectPath = path.join(archiveDir, project);
+        for (const file of findJsonlFiles(projectPath, excludedDirSet)) {
+            work.push({ project, conversationPath: path.join(projectPath, file) });
+        }
+    }
+    for (const { project, conversationPath } of work) {
+        totalChecked++;
+        options.onProgress?.(totalChecked, work.length);
+        foundFiles.add(conversationPath);
+        const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
+        // Parse first: this both detects corruption and lets us count exchanges
+        // before deciding the conversation is "missing" a summary.
+        let exchanges;
+        try {
+            exchanges = await parseConversation(conversationPath, project, conversationPath);
+        }
+        catch (error) {
+            result.corrupted.push({
+                path: conversationPath,
+                error: error instanceof Error ? error.message : String(error)
+            });
             continue;
         }
-        const projectPath = path.join(archiveDir, project);
-        const files = findJsonlFiles(projectPath, excludedDirSet);
-        for (const file of files) {
-            totalChecked++;
-            if (totalChecked % 100 === 0) {
-                console.log(`  Checked ${totalChecked} conversations...`);
-            }
-            const conversationPath = path.join(projectPath, file);
-            foundFiles.add(conversationPath);
-            const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
-            // Parse first: this both detects corruption and lets us count exchanges
-            // before deciding the conversation is "missing" a summary.
-            let exchanges;
-            try {
-                exchanges = await parseConversation(conversationPath, project, conversationPath);
-            }
-            catch (error) {
-                result.corrupted.push({
+        // Conversations with no exchanges (empty/aborted sessions) have nothing
+        // to summarize or index. They never get a summary file, so flagging them
+        // as "missing" loops forever — repair re-parses, finds 0 exchanges, skips,
+        // and the next verify flags them again. Treat them as nothing to do.
+        if (exchanges.length === 0) {
+            continue;
+        }
+        // A missing summary file means the conversation hasn't been summarized
+        // yet. Error/retry state lives in ConversationSyncState (Poison), not in
+        // the file; here we only care whether the derived summary exists.
+        if (!fs.existsSync(summaryPath)) {
+            result.missing.push({ path: conversationPath, reason: 'No summary file' });
+            continue;
+        }
+        // Check if file is outdated (modified after last_indexed)
+        const lastIndexed = getFileLastIndexed(db, conversationPath);
+        if (lastIndexed !== null) {
+            const fileStat = fs.lstatSync(conversationPath);
+            if (fileStat.mtimeMs > lastIndexed) {
+                result.outdated.push({
                     path: conversationPath,
-                    error: error instanceof Error ? error.message : String(error)
+                    fileTime: fileStat.mtimeMs,
+                    dbTime: lastIndexed
                 });
-                continue;
-            }
-            // Conversations with no exchanges (empty/aborted sessions) have nothing
-            // to summarize or index. They never get a summary file, so flagging them
-            // as "missing" loops forever — repair re-parses, finds 0 exchanges, skips,
-            // and the next verify flags them again. Treat them as nothing to do.
-            if (exchanges.length === 0) {
-                continue;
-            }
-            // A missing summary file means the conversation hasn't been summarized
-            // yet. Error/retry state lives in ConversationSyncState (Poison), not in
-            // the file; here we only care whether the derived summary exists.
-            if (!fs.existsSync(summaryPath)) {
-                result.missing.push({ path: conversationPath, reason: 'No summary file' });
-                continue;
-            }
-            // Check if file is outdated (modified after last_indexed)
-            const lastIndexed = getFileLastIndexed(db, conversationPath);
-            if (lastIndexed !== null) {
-                const fileStat = fs.lstatSync(conversationPath);
-                if (fileStat.mtimeMs > lastIndexed) {
-                    result.outdated.push({
-                        path: conversationPath,
-                        fileTime: fileStat.mtimeMs,
-                        dbTime: lastIndexed
-                    });
-                }
             }
         }
     }
-    console.log(`Verified ${totalChecked} conversations.`);
     // Check for orphaned database entries
     const dbExchanges = getAllExchanges(db);
     db.close();
@@ -95,8 +93,8 @@ export async function verifyIndex() {
     }
     return result;
 }
-export async function repairIndex(issues) {
-    console.log('Repairing index...');
+export async function repairIndex(issues, options = {}) {
+    const result = { removed: 0, reindexed: 0, exchanges: 0, skipped: 0, summaryFailures: 0, failed: [] };
     // To avoid circular dependencies, we import the indexer functions dynamically
     const { initDatabase, insertExchange, deleteExchange } = await import('./db.js');
     const { parseConversation } = await import('./parser.js');
@@ -106,16 +104,16 @@ export async function repairIndex(issues) {
     await initEmbeddings();
     // Remove orphaned entries first
     for (const orphan of issues.orphaned) {
-        console.log(`Removing orphaned entry: ${orphan.uuid}`);
         deleteExchange(db, orphan.uuid);
+        result.removed++;
     }
     // Re-index missing and outdated conversations
     const toReindex = [
         ...issues.missing.map(m => m.path),
         ...issues.outdated.map(o => o.path)
     ];
-    for (const conversationPath of toReindex) {
-        console.log(`Re-indexing: ${conversationPath}`);
+    for (const [i, conversationPath] of toReindex.entries()) {
+        options.onProgress?.(i, toReindex.length, conversationPath);
         try {
             // Extract project name from path
             const archiveDir = getArchiveDir();
@@ -124,7 +122,7 @@ export async function repairIndex(issues) {
             // Parse conversation
             const exchanges = await parseConversation(conversationPath, project, conversationPath);
             if (exchanges.length === 0) {
-                console.log(`  Skipped (no exchanges)`);
+                result.skipped++;
                 continue;
             }
             // Generate/update summary. This is best-effort: it calls the Claude
@@ -137,10 +135,9 @@ export async function repairIndex(issues) {
             try {
                 const summary = await summarizeConversation(exchanges);
                 fs.writeFileSync(summaryPath, summary, 'utf-8');
-                console.log(`  Created summary: ${summary.split(/\s+/).length} words`);
             }
-            catch (error) {
-                console.log(`  Summary failed (indexing anyway): ${error instanceof Error ? error.message : String(error)}`);
+            catch {
+                result.summaryFailures++;
             }
             // Index exchanges
             for (const exchange of exchanges) {
@@ -148,17 +145,15 @@ export async function repairIndex(issues) {
                 const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
                 insertExchange(db, exchange, embedding, toolNames);
             }
-            console.log(`  Indexed ${exchanges.length} exchanges`);
+            result.reindexed++;
+            result.exchanges += exchanges.length;
         }
         catch (error) {
-            console.error(`Failed to re-index ${conversationPath}:`, error);
+            result.failed.push({ path: conversationPath, error: error instanceof Error ? error.message : String(error) });
         }
     }
+    options.onProgress?.(toReindex.length, toReindex.length, '');
     db.close();
-    // Report corrupted files (manual intervention needed)
-    if (issues.corrupted.length > 0) {
-        console.log('\n⚠️  Corrupted files (manual review needed):');
-        issues.corrupted.forEach(c => console.log(`  ${c.path}: ${c.error}`));
-    }
-    console.log('✅ Repair complete.');
+    // Corrupted files need manual review; the CLI lists them.
+    return result;
 }

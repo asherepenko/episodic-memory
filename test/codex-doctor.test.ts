@@ -16,10 +16,10 @@ describe('Codex doctor report', () => {
     });
 
     expect(report.ok).toBe(true);
-    expect(report.text).toContain('Codex version: codex-cli 0.130.0 (ok; minimum 0.130.0)');
-    expect(report.text).toContain('Plugin hooks feature: enabled');
-    expect(report.text).toContain('Episodic Memory MCP: enabled');
-    expect(report.text).toContain('Hook trust: trusted');
+    expect(report.text).toContain('Version            codex-cli 0.130.0 (minimum 0.130.0)');
+    expect(report.text).toContain('Plugin hooks (legacy) enabled');
+    expect(report.text).toContain('MCP server         enabled');
+    expect(report.text).toContain('Hook trust         trusted');
     expect(report.text).toContain('/tmp/superpowers/logs/episodic-memory.log');
   });
 
@@ -41,7 +41,7 @@ describe('Codex doctor report', () => {
       hookTrustState: 'trusted',
     });
     expect(report.ok).toBe(ok);
-    if (!ok) expect(report.text).toContain(`codex features enable ${feature}.`);
+    if (!ok) expect(report.text).toContain(`codex features enable ${feature}`);
     if (feature === 'hooks') expect(report.text).not.toContain('codex features enable plugin_hooks');
   });
 
@@ -58,7 +58,7 @@ describe('Codex doctor report', () => {
     });
 
     expect(report.ok).toBe(true);
-    expect(report.text).toContain('Hook trust: trusted');
+    expect(report.text).toContain('Hook trust         trusted');
     expect(report.text).not.toContain('/hooks');
   });
 
@@ -75,7 +75,7 @@ describe('Codex doctor report', () => {
     });
 
     expect(report.ok).toBe(false);
-    expect(report.text).toContain('Hook trust: untrusted');
+    expect(report.text).toContain('Hook trust         untrusted');
     expect(report.text).toContain('/hooks');
   });
 

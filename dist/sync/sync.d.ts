@@ -1,3 +1,4 @@
+import { SyncState, type ConversationSyncStateStore } from './conversation-sync-state.js';
 export interface SyncResult {
     copied: number;
     skipped: number;
@@ -85,6 +86,15 @@ export declare function resolveSummaryBudgetMs(optionMs: number | undefined, env
 export declare function orderNewestFirst<T extends {
     path: string;
 }>(files: T[], mtime?: (file: string) => number | undefined): T[];
+/**
+ * Indexed conversations still waiting for a summary: not complete, file still
+ * on disk, not already queued, not excluded. Cheap checks only — the marker
+ * scan reads each file, so it runs later on just the files a run picks.
+ */
+export declare function collectSummaryBacklog(conversations: Iterable<string>, store: Pick<ConversationSyncStateStore, 'load'>, queued: ReadonlySet<string>, isExcluded: (file: string) => boolean): Array<{
+    path: string;
+    state: SyncState;
+}>;
 export declare function extractSessionIdFromPath(filePath: string): string | null;
 export interface ProjectOutcome {
     copied: number;

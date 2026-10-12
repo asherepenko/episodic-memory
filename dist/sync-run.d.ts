@@ -1,4 +1,3 @@
-export declare const tildify: (p: string) => string;
 /** Ask the running sync for one more pass when it finishes (a sync skipped on the lock). */
 export declare function requestRerun(): void;
 /** Consume a pending rerun request. True at most once per batch of requests. */

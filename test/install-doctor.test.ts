@@ -83,7 +83,7 @@ describe('install doctor report', () => {
   it('passes when every install is complete', () => {
     const report = buildInstallDoctorReport([status()]);
     expect(report.ok).toBe(true);
-    expect(report.text).toContain('OK');
+    expect(report.text).toContain('✓  Claude Code');
   });
 
   it('fails and names the missing paths', () => {

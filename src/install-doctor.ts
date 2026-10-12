@@ -10,6 +10,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { createUi, tildify, type Ui } from './cli-ui.js';
 
 export type PluginHost = 'Claude Code' | 'Codex';
 
@@ -91,48 +92,69 @@ export function readVersionField(installPath: string): string | null {
   }
 }
 
+export interface InstallDoctorCounts {
+  checks: number;
+  warnings: number;
+  failures: number;
+}
+
+/** Draw one install's result with the shared UI kit; returns true when healthy. */
+export function renderInstallStatus(ui: Ui, status: InstallStatus, repairAttempted: boolean): boolean {
+  const unresolved = status.stillMissing ?? status.missing;
+  const healthy = unresolved.length === 0;
+
+  ui.row(healthy ? 'ok' : 'fail', status.host, `${status.marketplace} · v${status.version}`);
+  ui.sub(tildify(status.path));
+  ui.sub(manifestSummary(status.path));
+  if (status.repaired?.length) {
+    ui.sub(`repaired ${status.repaired.length} path(s): ${status.repaired.join(', ')}`);
+  }
+  if (!healthy) {
+    ui.sub(`missing ${unresolved.length} path(s): ${unresolved.join(', ')}`);
+    ui.sub(repairAttempted
+      ? 'repair could not complete — reinstall the plugin'
+      : 'run: episodic-memory doctor install --repair');
+  }
+  return healthy;
+}
+
+/** Draw the whole install report and return the tallies. */
+export function renderInstallDoctor(
+  ui: Ui,
+  statuses: InstallStatus[],
+  { repairAttempted = false }: { repairAttempted?: boolean } = {}
+): InstallDoctorCounts {
+  const counts: InstallDoctorCounts = { checks: 0, warnings: 0, failures: 0 };
+  ui.heading('Plugin installs');
+
+  if (statuses.length === 0) {
+    ui.row('info', 'No plugin installs found under the Claude Code or Codex plugin caches.');
+    ui.sub('If you run episodic-memory from a git checkout or a global npm install, there is nothing for this check to inspect.');
+    return counts;
+  }
+
+  for (const status of statuses) {
+    if (renderInstallStatus(ui, status, repairAttempted)) counts.checks++;
+    else counts.failures++;
+  }
+  return counts;
+}
+
 /**
- * Render the report. Pure: discovery and repair happen in the CLI so this stays
- * directly testable against synthetic statuses.
+ * Render the report to plain text. Pure: discovery and repair happen in the CLI
+ * so this stays directly testable against synthetic statuses.
  */
 export function buildInstallDoctorReport(
   statuses: InstallStatus[],
   { repairAttempted = false }: { repairAttempted?: boolean } = {}
 ): InstallDoctorReport {
-  const lines: string[] = ['episodic-memory install integrity', ''];
-
-  if (statuses.length === 0) {
-    lines.push('  No plugin installs found under the Claude Code or Codex plugin caches.');
-    lines.push('  If you run episodic-memory from a git checkout or a global npm install,');
-    lines.push('  there is nothing for this check to inspect.');
-    lines.push('');
-    return { ok: true, text: lines.join('\n') };
-  }
-
-  let ok = true;
-
-  for (const status of statuses) {
-    const unresolved = status.stillMissing ?? status.missing;
-    const healthy = unresolved.length === 0;
-    if (!healthy) ok = false;
-
-    lines.push(`  ${healthy ? 'OK  ' : 'FAIL'} ${status.host} · ${status.marketplace} · v${status.version}`);
-    lines.push(`       ${status.path}`);
-    lines.push(`       ${manifestSummary(status.path)}`);
-
-    if (status.repaired?.length) {
-      lines.push(`       repaired ${status.repaired.length} path(s): ${status.repaired.join(', ')}`);
-    }
-    if (!healthy) {
-      lines.push(`       missing ${unresolved.length} path(s): ${unresolved.join(', ')}`);
-      lines.push(
-        repairAttempted
-          ? '       repair could not complete — reinstall the plugin'
-          : '       run: episodic-memory doctor install --repair'
-      );
-    }
-    lines.push('');
-  }
-
-  return { ok, text: lines.join('\n') };
+  let text = '';
+  const ui = createUi({
+    out: { write: chunk => { text += chunk; } },
+    live: { write: () => {} },
+    color: false,
+    interactive: false,
+  });
+  const counts = renderInstallDoctor(ui, statuses, { repairAttempted });
+  return { ok: counts.failures === 0, text };
 }

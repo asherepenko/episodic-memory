@@ -1,3 +1,6 @@
+import { createUi, plural, tildify, truncateMiddle, type Ui } from './cli-ui.js';
+import { fullProjectName } from './sync-report.js';
+import type { ConversationExchange } from './types.js';
 import { searchConversations, formatResults, searchMultipleConcepts, formatMultiConceptResults, buildEmptyResultHint, SearchOptions } from './search.js';
 
 const args = process.argv.slice(2);
@@ -95,23 +98,61 @@ if (queries.length === 0) {
   process.exit(1);
 }
 
+const useUi = Boolean(process.stdout.isTTY);
+const ui = createUi();
+
+const SNIPPET_WIDTH = 100;
+
+/** One numbered result block: project, date, score, dim snippet, dim location. */
+function renderResult(ui: Ui, index: number, exchange: ConversationExchange, score: string | undefined, snippet: string): void {
+  const date = new Date(exchange.timestamp).toISOString().split('T')[0];
+  const label = truncateMiddle(`${index + 1}. ${fullProjectName(exchange.project)}`, 44);
+  ui.line(`  ${ui.paint('bold', label.padEnd(44))} ${date}${score ? `  ${score}` : ''}`);
+  const flat = snippet.replace(/\s+/g, ' ').trim();
+  if (flat) ui.line(`     ${ui.paint('dim', truncateMiddle(flat, SNIPPET_WIDTH))}`);
+  ui.sub(`${truncateMiddle(tildify(exchange.archivePath), 90)}:${exchange.lineStart}-${exchange.lineEnd}`);
+}
+
+async function renderEmpty(): Promise<void> {
+  ui.heading('0 results');
+  ui.row('info', 'No results', 'try --text or a broader query');
+  const hint = await buildEmptyResultHint();
+  if (hint) ui.sub(hint);
+}
+
+function failSearch(error: unknown): never {
+  if (useUi) {
+    ui.row('fail', 'Search failed', error instanceof Error ? error.message : String(error));
+  } else {
+    console.error('Error searching:', error);
+  }
+  process.exit(1);
+}
+
 // Multi-concept search if multiple queries provided
 if (queries.length > 1) {
   const options = { limit, after, before, project, session_id: sessionId, git_branch: gitBranch, minScore, rerank };
 
-  searchMultipleConcepts(queries, options)
-    .then(async results => {
-      let out = await formatMultiConceptResults(results, queries);
-      if (results.length === 0) {
-        const hint = await buildEmptyResultHint();
-        if (hint) out += `\n\n💡 ${hint}`;
-      }
-      console.log(out);
-    })
-    .catch(error => {
-      console.error('Error searching:', error);
-      process.exit(1);
-    });
+  const run = useUi
+    ? ui.task('searching...', () => searchMultipleConcepts(queries, options)).then(async results => {
+        if (results.length === 0) return renderEmpty();
+        ui.heading(`${plural(results.length, 'result')} matching all of ${queries.map(q => `"${q}"`).join(' + ')}`);
+        ui.line();
+        results.forEach((r, i) => {
+          const scores = r.conceptSimilarities.map((sim, j) => `${queries[j]}: ${Math.round(sim * 100)}%`).join(', ');
+          renderResult(ui, i, r.exchange, `${Math.round(r.averageSimilarity * 100)}% avg`, r.snippet);
+          ui.line(`     ${ui.paint('dim', scores)}`);
+        });
+      })
+    : searchMultipleConcepts(queries, options).then(async results => {
+        let out = await formatMultiConceptResults(results, queries);
+        if (results.length === 0) {
+          const hint = await buildEmptyResultHint();
+          if (hint) out += `\n\n💡 ${hint}`;
+        }
+        console.log(out);
+      });
+  run.catch(failSearch);
 } else {
   // Single query - use regular search
   const options: SearchOptions = {
@@ -126,18 +167,22 @@ if (queries.length > 1) {
     rerank,
   };
 
-  searchConversations(queries[0], options)
-    .then(async results => {
-      let out = await formatResults(results);
-      if (results.length === 0) {
-        const hint = await buildEmptyResultHint();
-        if (hint) out += `\n\n💡 ${hint}`;
-      }
-      console.log(out);
-    })
-    .catch(error => {
-      console.error('Error searching:', error);
-      process.exit(1);
-    });
+  const run = useUi
+    ? ui.task('searching...', () => searchConversations(queries[0], options)).then(async results => {
+        if (results.length === 0) return renderEmpty();
+        ui.heading(`${plural(results.length, 'result')} for "${queries[0]}"`);
+        ui.line();
+        results.forEach((r, i) => {
+          renderResult(ui, i, r.exchange, r.similarity !== undefined ? `${Math.round(r.similarity * 100)}% match` : undefined, r.snippet);
+        });
+      })
+    : searchConversations(queries[0], options).then(async results => {
+        let out = await formatResults(results);
+        if (results.length === 0) {
+          const hint = await buildEmptyResultHint();
+          if (hint) out += `\n\n💡 ${hint}`;
+        }
+        console.log(out);
+      });
+  run.catch(failSearch);
 }
-

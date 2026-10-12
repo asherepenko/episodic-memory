@@ -1,3 +1,4 @@
+import { type Ui } from './cli-ui.js';
 export type PluginHost = 'Claude Code' | 'Codex';
 export interface DiscoveredInstall {
     host: PluginHost;
@@ -25,9 +26,20 @@ export declare function discoverInstalls(hostRoots: Array<{
     dir: string;
 }>): DiscoveredInstall[];
 export declare function readVersionField(installPath: string): string | null;
+export interface InstallDoctorCounts {
+    checks: number;
+    warnings: number;
+    failures: number;
+}
+/** Draw one install's result with the shared UI kit; returns true when healthy. */
+export declare function renderInstallStatus(ui: Ui, status: InstallStatus, repairAttempted: boolean): boolean;
+/** Draw the whole install report and return the tallies. */
+export declare function renderInstallDoctor(ui: Ui, statuses: InstallStatus[], { repairAttempted }?: {
+    repairAttempted?: boolean;
+}): InstallDoctorCounts;
 /**
- * Render the report. Pure: discovery and repair happen in the CLI so this stays
- * directly testable against synthetic statuses.
+ * Render the report to plain text. Pure: discovery and repair happen in the CLI
+ * so this stays directly testable against synthetic statuses.
  */
 export declare function buildInstallDoctorReport(statuses: InstallStatus[], { repairAttempted }?: {
     repairAttempted?: boolean;

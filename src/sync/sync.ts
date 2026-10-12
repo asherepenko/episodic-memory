@@ -8,6 +8,7 @@ import {
   isRetriable,
   MAX_ATTEMPTS,
   SyncState,
+  type ConversationSyncStateStore,
 } from './conversation-sync-state.js';
 
 const EXCLUSION_MARKERS = [
@@ -143,6 +144,8 @@ function copyIfNewer(src: string, dest: string): boolean {
 
 interface ArchiveIndexer {
   indexProject(projectDir: string, project: string, onProgress?: (done: number, of: number) => void): Promise<{ indexed: number; exchanges: number; errors: Array<{ file: string; error: string }> }>;
+  /** Every conversation with at least one indexed exchange. */
+  listConversations(): Promise<string[]>;
   close(): void;
 }
 
@@ -221,11 +224,35 @@ function createArchiveIndexer(excludedDirSet: ReadonlySet<string>): ArchiveIndex
       onProgress?.(pending.length, pending.length);
       return out;
     },
+    async listConversations() {
+      const { db } = await open();
+      return (db.prepare('SELECT DISTINCT archive_path FROM exchanges').all() as Array<{ archive_path: string }>).map(r => r.archive_path);
+    },
     close() {
       state?.db.close();
       state = undefined;
     },
   };
+}
+
+/**
+ * Indexed conversations still waiting for a summary: not complete, file still
+ * on disk, not already queued, not excluded. Cheap checks only — the marker
+ * scan reads each file, so it runs later on just the files a run picks.
+ */
+export function collectSummaryBacklog(
+  conversations: Iterable<string>,
+  store: Pick<ConversationSyncStateStore, 'load'>,
+  queued: ReadonlySet<string>,
+  isExcluded: (file: string) => boolean,
+): Array<{ path: string; state: SyncState }> {
+  const backlog: Array<{ path: string; state: SyncState }> = [];
+  for (const file of conversations) {
+    if (queued.has(file) || isExcluded(file) || !fs.existsSync(file)) continue;
+    const state = store.load(file);
+    if (state.kind !== 'complete') backlog.push({ path: file, state });
+  }
+  return backlog;
 }
 
 export function extractSessionIdFromPath(filePath: string): string | null {
@@ -272,7 +299,8 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
   const emit = options.onEvent ?? (() => {});
   const excludedDirSet = new Set(getExcludedProjects());
   const indexer = createArchiveIndexer(excludedDirSet);
-  const filesToSummarize: Array<{ path: string; sessionId: string; state: SyncState }> = [];
+  const filesToSummarize: Array<{ path: string; state: SyncState }> = [];
+  const inExcludedProject = (file: string) => excludedDirSet.has(path.relative(destDir, file).split(path.sep)[0]);
 
   // Index everything in the project's archive dir that indexed_files lacks —
   // not just what was copied now. A run that dies between copy and index
@@ -317,10 +345,7 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
 
           // Check if this file needs a summary (whether newly copied or existing)
           if (!options.skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
-            const sessionId = extractSessionIdFromPath(destFile);
-            if (sessionId) {
-              filesToSummarize.push({ path: destFile, sessionId, state });
-            }
+            filesToSummarize.push({ path: destFile, state });
           }
         } catch (error) {
           outcome.errors++;
@@ -342,7 +367,16 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
     },
 
     async summarize() {
-      if (options.skipSummaries || filesToSummarize.length === 0) return;
+      if (options.skipSummaries) return;
+      // Plus every indexed conversation still unsummarized — archive-only
+      // projects and subagent files never pass through syncProject's queue.
+      try {
+        const queued = new Set(filesToSummarize.map(f => f.path));
+        filesToSummarize.push(...collectSummaryBacklog(await indexer.listConversations(), store, queued, inExcludedProject));
+      } catch (error) {
+        log.warn(`Could not read the summary backlog: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (filesToSummarize.length === 0) return;
       const { parseConversation } = await import('../parser.js');
       const { summarizeConversation } = await import('../summarizer.js');
       const { dedupAgainstSiblings } = await import('../dedup.js');
@@ -355,7 +389,16 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
       }
 
       const summaryLimit = options.summaryLimit ?? DEFAULT_SUMMARY_LIMIT;
-      const toSummarize = orderNewestFirst(eligible).slice(0, summaryLimit);
+      const toSummarize: typeof eligible = [];
+      for (const file of orderNewestFirst(eligible)) {
+        if (toSummarize.length >= summaryLimit) break;
+        // Backlog entries skipped the marker scan; do it now, only for picks.
+        if (shouldSkipConversation(file.path)) {
+          store.save(file.path, { kind: 'complete', lastUpdated: new Date().toISOString() });
+          continue;
+        }
+        toSummarize.push(file);
+      }
       const budgetMs = resolveSummaryBudgetMs(options.summaryBudgetMs, process.env.EPISODIC_MEMORY_SUMMARY_BUDGET_SEC);
       const budgetStartedAt = Date.now();
       const remaining = eligible.length - toSummarize.length;

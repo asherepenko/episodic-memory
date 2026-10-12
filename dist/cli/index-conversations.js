@@ -3,7 +3,6 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { spawn } from 'child_process';
 import { realpathSync } from 'fs';
-import { createInterface } from 'readline';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(realpathSync(__filename));
 function runScript(command, scriptArgs) {
@@ -18,23 +17,12 @@ function runScript(command, scriptArgs) {
                 resolve();
             }
             else {
-                reject(new Error(`Command failed with exit code ${code}`));
+                // The command already printed its own report; pass the code through quietly.
+                process.exit(code ?? 1);
             }
         });
         child.on('error', (err) => {
             reject(new Error(`Failed to run command: ${err.message}`));
-        });
-    });
-}
-function askConfirmation(question) {
-    return new Promise((resolve) => {
-        const rl = createInterface({
-            input: process.stdin,
-            output: process.stdout,
-        });
-        rl.question(question, (answer) => {
-            rl.close();
-            resolve(answer.toLowerCase() === 'yes');
         });
     });
 }
@@ -50,7 +38,7 @@ COMMANDS:
   --session ID   Index specific session (used by hook)
   --verify       Check index health
   --repair       Fix detected issues
-  --rebuild      Delete DB and re-index everything (requires confirmation)
+  --rebuild      Delete DB and re-index everything (asks first; --yes skips)
 
 OPTIONS:
   --concurrency N    Parallel summarization (1-16, default: 2)
@@ -112,17 +100,10 @@ async function main() {
             case '--repair':
                 await runScript('repair', args);
                 break;
-            case '--rebuild': {
-                console.log('⚠️  This will DELETE the entire database and re-index everything.');
-                const confirmed = await askConfirmation('Are you sure? [yes/NO]: ');
-                if (confirmed) {
-                    await runScript('rebuild', args);
-                }
-                else {
-                    console.log('Cancelled');
-                }
+            case '--rebuild':
+                // rebuild asks for confirmation itself (or takes --yes).
+                await runScript('rebuild', args);
                 break;
-            }
             default:
                 await runScript('index-all', [command, ...args]);
                 break;

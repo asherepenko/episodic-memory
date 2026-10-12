@@ -6,7 +6,8 @@ import { openDatabase } from './db.js';
 import { countStale } from './embedding-migration.js';
 import { isNativeBindingError } from './native-binding.js';
 import { countSyncStates } from './sync/index.js';
-import { buildStatusReport } from './status.js';
+import { renderStatus } from './status.js';
+import { createUi } from './cli-ui.js';
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: episodic-memory status
@@ -26,6 +27,14 @@ const EMPTY_STATS = {
     projectCount: 0,
 };
 async function main() {
+    const ui = createUi();
+    const startedAt = Date.now();
+    const input = await ui.task('reading index...', gather);
+    const ok = renderStatus(ui, input);
+    ui.done(startedAt, [ok ? 'engine healthy' : 'engine unhealthy'], { ok, verb: 'checked' });
+    process.exit(ok ? 0 : 1);
+}
+async function gather() {
     const dbPath = getDbPath();
     const dbExists = fs.existsSync(dbPath);
     let nativeBindingOk = true;
@@ -72,7 +81,7 @@ async function main() {
         // No sync has run yet.
     }
     const apiEnvSet = !!(process.env.ANTHROPIC_API_KEY || process.env.EPISODIC_MEMORY_API_BASE_URL);
-    const report = buildStatusReport({
+    return {
         dbPath,
         dbExists,
         nativeBindingOk,
@@ -83,9 +92,7 @@ async function main() {
         apiEnvSet,
         lastSync,
         now: new Date().toISOString(),
-    });
-    process.stdout.write(report.text);
-    process.exit(report.ok ? 0 : 1);
+    };
 }
 main().catch(err => {
     console.error(err instanceof Error ? err.message : String(err));

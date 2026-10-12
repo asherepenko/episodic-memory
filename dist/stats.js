@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { getDbPath, getExcludedProjects, findJsonlFiles, entryIsDirectory } from './paths.js';
 import { openDatabase } from './db.js';
+import { createUi, num, plural } from './cli-ui.js';
+import { fullProjectName } from './sync-report.js';
+import { VERSION } from './version.js';
 /**
  * Archived transcripts that the next sync would index: no indexed_files row,
  * or modified since. Uses the same rule as sync, so 0 means search covers the
@@ -128,48 +131,71 @@ export async function getIndexStats(dbPath) {
         db.close();
     }
 }
-export function formatStats(stats) {
-    let output = 'Episodic Memory Index Statistics\n';
-    output += '='.repeat(50) + '\n\n';
-    output += `Search Index\n`;
-    output += `  Conversations: ${stats.totalConversations.toLocaleString()}\n`;
-    output += `  Exchanges: ${stats.totalExchanges.toLocaleString()}\n`;
+const MONTH_DAY = { month: 'short', day: 'numeric' };
+const MONTH_DAY_YEAR = { month: 'short', day: 'numeric', year: 'numeric' };
+/** "Jan 12 → Oct 13, 2026", or with both years when the range spans years. */
+export function formatDateRange(earliest, latest) {
+    const a = new Date(earliest);
+    const b = new Date(latest);
+    if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()))
+        return `${earliest} → ${latest}`;
+    const sameYear = a.getFullYear() === b.getFullYear();
+    const from = a.toLocaleDateString('en-US', sameYear ? MONTH_DAY : MONTH_DAY_YEAR);
+    return `${from} → ${b.toLocaleDateString('en-US', MONTH_DAY_YEAR)}`;
+}
+/** Draw the stats report through the shared UI kit. */
+export function renderStats(ui, stats) {
+    ui.line(`${ui.paint('bold', 'Episodic Memory')} ${ui.paint('dim', `v${VERSION} · index statistics`)}`);
+    ui.heading('Search Index');
+    ui.field('Conversations', num(stats.totalConversations));
+    ui.field('Exchanges', num(stats.totalExchanges));
+    if (stats.dateRange)
+        ui.field('Date range', formatDateRange(stats.dateRange.earliest, stats.dateRange.latest));
+    ui.field('Projects', num(stats.projectCount));
     if (stats.pendingIndex !== undefined) {
-        output += stats.pendingIndex === 0
-            ? `  Waiting to index: 0 (all archived transcripts indexed)\n`
-            : `  Waiting to index: ${stats.pendingIndex.toLocaleString()} transcript(s) — run: episodic-memory sync\n`;
-    }
-    output += '\n';
-    // Summaries are one-line captions on search results; search itself runs on
-    // exchanges, so a missing summary never hides a conversation.
-    output += `Summaries (captions on search results; search works without them)\n`;
-    output += `  With Summaries: ${stats.conversationsWithSummaries.toLocaleString()}\n`;
-    output += `  Without Summaries: ${stats.conversationsWithoutSummaries.toLocaleString()}`;
-    if (stats.conversationsWithoutSummaries > 0 && stats.totalConversations > 0) {
-        const percentage = ((stats.conversationsWithoutSummaries / stats.totalConversations) * 100).toFixed(1);
-        output += ` (${percentage}%)`;
-    }
-    output += '\n\n';
-    if (stats.dateRange) {
-        output += `Date Range:\n`;
-        output += `  Earliest: ${new Date(stats.dateRange.earliest).toLocaleDateString()}\n`;
-        output += `  Latest: ${new Date(stats.dateRange.latest).toLocaleDateString()}\n\n`;
-    }
-    output += `Unique Projects: ${stats.projectCount.toLocaleString()}\n\n`;
-    if (stats.staleEmbeddings && stats.staleEmbeddings > 0) {
-        output += `Stale Embeddings: ${stats.staleEmbeddings.toLocaleString()} exchange(s) on an old model\n`;
-        output += `  (re-embedded incrementally on each sync)\n\n`;
-    }
-    if (stats.poisonConversations && stats.poisonConversations > 0) {
-        output += `Permanently Skipped: ${stats.poisonConversations.toLocaleString()} conversation(s) after repeated summary failures\n`;
-        output += `  (retry with EPISODIC_MEMORY_RETRY_ALL=1 episodic-memory sync)\n\n`;
-    }
-    if (stats.topProjects && stats.topProjects.length > 0) {
-        output += `Top Projects by Conversation Count:\n`;
-        for (const { project, count } of stats.topProjects) {
-            const displayProject = project || '(unknown)';
-            output += `  ${count.toString().padStart(4)} - ${displayProject}\n`;
+        if (stats.pendingIndex === 0) {
+            ui.row('ok', 'Waiting to index', '0 (all archived transcripts indexed)');
+        }
+        else {
+            ui.row('warn', 'Waiting to index', plural(stats.pendingIndex, 'transcript'));
+            ui.sub('run: episodic-memory sync');
         }
     }
-    return output;
+    // Summaries are one-line captions on search results; search itself runs on
+    // exchanges, so a missing summary never hides a conversation.
+    ui.heading('Summaries');
+    ui.field('With summaries', num(stats.conversationsWithSummaries));
+    let without = num(stats.conversationsWithoutSummaries);
+    if (stats.conversationsWithoutSummaries > 0 && stats.totalConversations > 0) {
+        without += ` (${((stats.conversationsWithoutSummaries / stats.totalConversations) * 100).toFixed(1)}%)`;
+    }
+    ui.field('Without summaries', without);
+    ui.sub('captions on search results; search works without them');
+    const stale = stats.staleEmbeddings ?? 0;
+    const poison = stats.poisonConversations ?? 0;
+    if (stale > 0 || poison > 0) {
+        ui.heading('Health');
+        if (stale > 0) {
+            ui.row('warn', 'Stale embeddings', `${plural(stale, 'exchange')} on an old model`);
+            ui.sub('re-embedded incrementally on each sync');
+        }
+        if (poison > 0) {
+            ui.row('warn', 'Permanently skipped', `${plural(poison, 'conversation')} after repeated summary failures`);
+            ui.sub('retry with: EPISODIC_MEMORY_RETRY_ALL=1 episodic-memory sync');
+        }
+    }
+    if (stats.topProjects && stats.topProjects.length > 0) {
+        ui.heading('Top Projects by Conversation Count');
+        const width = Math.max(...stats.topProjects.map(p => num(p.count).length));
+        for (const { project, count } of stats.topProjects) {
+            const name = project ? fullProjectName(project) : '(unknown)';
+            ui.line(`  ${num(count).padStart(width)}  ${name}`);
+        }
+    }
+}
+/** Plain-text rendering (no color, no animation); same layout as the terminal. */
+export function formatStats(stats) {
+    const chunks = [];
+    renderStats(createUi({ out: { write: s => chunks.push(s) }, live: { write: () => { } }, color: false }), stats);
+    return chunks.join('');
 }
