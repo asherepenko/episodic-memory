@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT}/cli/episodic-memory.mjs\" ]; then node \"${CLAUDE_PLUGIN_ROOT}/cli/episodic-memory.mjs\" sync --background; fi",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

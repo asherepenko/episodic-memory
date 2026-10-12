@@ -42,7 +42,8 @@ async function withProgress<T>(label: string, work: () => Promise<T>): Promise<T
 
 /**
  * Index everything the ledger is missing, with the same grouped report as
- * `sync`. Unlike sync, summarize every eligible conversation, not just 10.
+ * `sync`. Unlike sync, summarize every eligible conversation, with no count
+ * cap or time budget.
  */
 async function indexAll(): Promise<void> {
   const lock = acquireSyncLock();
@@ -50,7 +51,7 @@ async function indexAll(): Promise<void> {
     console.error(`episodic-memory: a sync is already running (${lock.holder}); try again when it finishes`);
     process.exit(1);
   }
-  await runSync({ summaryLimit: Infinity, concurrency, skipSummaries: noSummaries });
+  await runSync({ summaryLimit: Infinity, summaryBudgetMs: Infinity, concurrency, skipSummaries: noSummaries });
 }
 
 async function main() {

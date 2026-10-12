@@ -60,6 +60,7 @@ export interface SyncOptions {
     skipIndex?: boolean;
     skipSummaries?: boolean;
     summaryLimit?: number;
+    summaryBudgetMs?: number;
     concurrency?: number;
     onEvent?: (event: SyncEvent) => void;
 }
@@ -74,6 +75,16 @@ export interface IndexArchiveOptions {
  * Non-positive or non-numeric inputs fall through to the next source.
  */
 export declare function resolveSummaryConcurrency(optionConcurrency: number | undefined, envValue: string | undefined): number;
+export declare const DEFAULT_SUMMARY_LIMIT = 50;
+/**
+ * How long a run may keep starting new summaries. Precedence: explicit option
+ * (ms) > EPISODIC_MEMORY_SUMMARY_BUDGET_SEC (seconds; 0 = no budget) > 5 min.
+ */
+export declare function resolveSummaryBudgetMs(optionMs: number | undefined, envValue: string | undefined): number;
+/** Newest conversations first, so a capped run captions recent work before old backlog. */
+export declare function orderNewestFirst<T extends {
+    path: string;
+}>(files: T[], mtime?: (file: string) => number | undefined): T[];
 export declare function extractSessionIdFromPath(filePath: string): string | null;
 export interface ProjectOutcome {
     copied: number;

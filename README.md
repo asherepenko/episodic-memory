@@ -237,7 +237,7 @@ Codex summarization requires `codex-cli 0.130.0` or newer. If Codex app-server s
 
 | Component | Uses custom config? |
 |-----------|---------------------|
-| Summarization | Yes (up to `--limit` calls/sync, default 10) |
+| Summarization | Yes (up to `--limit` calls/sync, default 50, newest first, 5-minute budget) |
 | Embeddings | No (local Transformers.js) |
 | Search | No (local SQLite) |
 | MCP tools | No |
@@ -257,7 +257,7 @@ Features:
 
 **Options:**
 - `--background` — fork and return immediately (use in hooks)
-- `--limit <n>` — max summaries to generate per run (default: `10`)
+- `--limit <n>` — max summaries to generate per run, newest first (default: `50`). A run also stops starting new summaries after `EPISODIC_MEMORY_SUMMARY_BUDGET_SEC` seconds (default `300`; `0` = no time limit)
 - `--concurrency <n>` / `-c <n>` — parallel summary workers, `1`–`16` (overrides `EPISODIC_MEMORY_CONCURRENCY`; default `2`)
 
 **Examples:**

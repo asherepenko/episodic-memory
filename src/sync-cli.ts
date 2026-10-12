@@ -4,7 +4,8 @@ import { shouldSkipReentrantSync } from './summarizer.js';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import { formatLogLine, getSyncLogPath } from './logging.js';
-import { acquireSyncLock, runSync } from './sync-run.js';
+import { DEFAULT_SUMMARY_LIMIT } from './sync/index.js';
+import { acquireSyncLock, requestRerun, runSync, takeRerunRequest } from './sync-run.js';
 
 const args = process.argv.slice(2);
 
@@ -36,13 +37,15 @@ Safe to run multiple times - subsequent runs are fast no-ops.
 
 OPTIONS:
   --background        Run sync in background (for hooks, returns immediately)
-  --limit <n>         Max summaries to generate per run (default: 10)
+  --limit <n>         Max summaries to generate per run, newest first (default: 50)
   --concurrency <n>   Parallel summary workers, 1-16 (overrides
   -c <n>              EPISODIC_MEMORY_CONCURRENCY; default: 2)
 
 ENV:
   EPISODIC_MEMORY_API_TIMEOUT_MS    Per-call Claude SDK timeout (default: 180000)
   EPISODIC_MEMORY_CONCURRENCY       Parallel summary workers (default: 2; --concurrency wins)
+  EPISODIC_MEMORY_SUMMARY_BUDGET_SEC  Stop starting new summaries after this many
+                                    seconds (default: 300; 0 = no time limit)
   EPISODIC_MEMORY_RETRY_ALL         Set to retry files marked as poison-pill
   EPISODIC_MEMORY_DEDUP             Set to "0" to disable summary dedup
   EPISODIC_MEMORY_DEDUP_THRESHOLD   Cosine similarity cutoff (default: 0.95)
@@ -84,7 +87,7 @@ const isBackground = args.includes('--background');
 // Parse --limit <n>
 const limitIdx = args.indexOf('--limit');
 const limitRaw = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : NaN;
-const summaryLimit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10;
+const summaryLimit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : DEFAULT_SUMMARY_LIMIT;
 
 // Parse --concurrency <n> / -c <n> (1-16). Overrides EPISODIC_MEMORY_CONCURRENCY.
 // Survives the --background fork: filteredArgs strips only --background, so the
@@ -137,11 +140,26 @@ if (sourceDirs.length === 0) {
 // cascade (summarizer-spawned syncs).
 const lock = acquireSyncLock();
 if (!lock.ok) {
-  console.error(`episodic-memory: sync already running (${lock.holder}); skipping`);
+  requestRerun();
+  console.error(`episodic-memory: sync already running (${lock.holder}); it will run again when done`);
   process.exit(0);
 }
 
-runSync({ summaryLimit, concurrency })
+// A sync skipped on the lock (often SessionEnd's) asked for another pass: the
+// run in flight may already be past that session's project. Reruns only copy
+// and index; summaries wait for the next full run. Capped so a steady stream
+// of new sessions cannot keep one process alive forever.
+const MAX_RERUNS = 3;
+
+async function syncWithReruns(): Promise<void> {
+  await runSync({ summaryLimit, concurrency });
+  for (let i = 0; i < MAX_RERUNS && takeRerunRequest(); i++) {
+    console.log('\nAnother sync was requested while this one ran — syncing again');
+    await runSync({ skipSummaries: true });
+  }
+}
+
+syncWithReruns()
   .then(() => closeLog())
   .catch(error => {
     console.error('Error syncing:', error);

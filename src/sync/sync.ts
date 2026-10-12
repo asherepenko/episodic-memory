@@ -63,7 +63,8 @@ export type SyncEvent =
 export interface SyncOptions {
   skipIndex?: boolean;
   skipSummaries?: boolean;
-  summaryLimit?: number; // Max summaries to generate per run (default: 10)
+  summaryLimit?: number; // Max summaries to generate per run (default: DEFAULT_SUMMARY_LIMIT)
+  summaryBudgetMs?: number; // Stop starting summaries after this long; overrides EPISODIC_MEMORY_SUMMARY_BUDGET_SEC (Infinity = none)
   concurrency?: number;  // Parallel summary workers; overrides EPISODIC_MEMORY_CONCURRENCY (default: 2)
   onEvent?: (event: SyncEvent) => void;
 }
@@ -87,6 +88,34 @@ export function resolveSummaryConcurrency(
   const env = parseInt(envValue ?? '', 10);
   if (Number.isFinite(env) && env > 0) return env;
   return 2;
+}
+
+export const DEFAULT_SUMMARY_LIMIT = 50;
+const DEFAULT_SUMMARY_BUDGET_SEC = 300;
+
+/**
+ * How long a run may keep starting new summaries. Precedence: explicit option
+ * (ms) > EPISODIC_MEMORY_SUMMARY_BUDGET_SEC (seconds; 0 = no budget) > 5 min.
+ */
+export function resolveSummaryBudgetMs(optionMs: number | undefined, envValue: string | undefined): number {
+  if (optionMs !== undefined && optionMs > 0) return optionMs;
+  const env = parseInt(envValue ?? '', 10);
+  if (Number.isFinite(env) && env >= 0) return env === 0 ? Infinity : env * 1000;
+  return DEFAULT_SUMMARY_BUDGET_SEC * 1000;
+}
+
+function safeMtime(file: string): number | undefined {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Newest conversations first, so a capped run captions recent work before old backlog. */
+export function orderNewestFirst<T extends { path: string }>(files: T[], mtime: (file: string) => number | undefined = safeMtime): T[] {
+  const time = new Map(files.map(f => [f.path, mtime(f.path) ?? -Infinity]));
+  return [...files].sort((a, b) => time.get(b.path)! - time.get(a.path)!);
 }
 
 function copyIfNewer(src: string, dest: string): boolean {
@@ -325,8 +354,10 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
         log.info(`Skipping ${skippedPoison} file(s) that exceeded ${MAX_ATTEMPTS} retries (set EPISODIC_MEMORY_RETRY_ALL=1 to retry).`);
       }
 
-      const summaryLimit = options.summaryLimit ?? 10;
-      const toSummarize = eligible.slice(0, summaryLimit);
+      const summaryLimit = options.summaryLimit ?? DEFAULT_SUMMARY_LIMIT;
+      const toSummarize = orderNewestFirst(eligible).slice(0, summaryLimit);
+      const budgetMs = resolveSummaryBudgetMs(options.summaryBudgetMs, process.env.EPISODIC_MEMORY_SUMMARY_BUDGET_SEC);
+      const budgetStartedAt = Date.now();
       const remaining = eligible.length - toSummarize.length;
 
       const concurrency = resolveSummaryConcurrency(
@@ -414,12 +445,18 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
       const queue = toSummarize;
       const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
         while (true) {
+          // In-flight summaries finish; no new one starts once the budget is spent.
+          if (Date.now() - budgetStartedAt >= budgetMs) return;
           const i = cursor++;
           if (i >= queue.length) return;
           await summarizeOne(queue[i].path, i + 1);
         }
       });
       await Promise.all(workers);
+      const unstarted = queue.length - Math.min(cursor, queue.length);
+      if (unstarted > 0) {
+        log.info(`Summary time budget (${Math.round(budgetMs / 1000)}s) spent; ${unstarted} left for the next sync.`);
+      }
       const poisonCount = store.countPoison();
       if (poisonCount > 0) {
         log.info(`State: ${poisonCount} file(s) recorded as poison-pill (≥${MAX_ATTEMPTS} attempts).`);

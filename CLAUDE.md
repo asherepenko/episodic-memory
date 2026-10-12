@@ -209,6 +209,7 @@ interface ConversationExchange {
 - `EPISODIC_MEMORY_API_BASE_URL` — Anthropic API base (for summaries)
 - `EPISODIC_MEMORY_API_MODEL` — Model for summaries (e.g., claude-opus-4-1)
 - `EPISODIC_MEMORY_CONCURRENCY` — Parallel summary workers per sync (default: 2). The `sync --concurrency`/`-c` flag (1–16) overrides it. The SessionStart hook runs a bare `sync --background` and *inherits* this from the session env — it never sets it — so export it in the session environment to tune the background hook; use the flag for a one-off manual catch-up.
+- `EPISODIC_MEMORY_SUMMARY_BUDGET_SEC` — Seconds a sync may keep starting new summaries (default 300; `0` = none). Queue is newest-first, capped by `--limit` (default 50). `index` ignores both
 - `EPISODIC_MEMORY_SUMMARIZER_GUARD` — Set to `1` by `getApiEnv()` to break recursive Claude SDK spawn loops; sync-cli silently exits when seen
 - `ANTHROPIC_API_KEY` — For API calls
 - `TEST_DB_PATH`, `TEST_ARCHIVE_DIR`, `TEST_PROJECTS_DIR` — Test overrides
@@ -239,6 +240,10 @@ The fix:
 - `sync-cli.ts` checks `shouldSkipReentrantSync()` at startup and exits silently when the guard is set
 
 **Anything new that spawns a Claude subprocess via the SDK must inherit this guard.** And nothing should run `sync --background` without checking the guard first. See `test/sync-cli-reentrancy.test.ts`.
+
+### Background sync hooks
+
+Claude Code fires `sync --background` on **SessionStart and SessionEnd** (Codex: SessionStart only — it has no session-end event). A run that loses the lock writes `episodic-memory-sync.rerun`; the holder does up to 3 copy+index-only passes after it finishes. Every stop is logged to `~/.config/superpowers/logs/episodic-memory.log`: `sync stopped by SIGTERM`, `sync exited with code N`, or, for a SIGKILL, `previous sync (pid X) ended without finishing` on the next run.
 
 ### Partial plugin installs
 

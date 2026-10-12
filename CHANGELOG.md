@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-10-13
+
+### Added
+- **A session is searchable as soon as it closes.** Background sync used to run only when a session *started*, so whatever you worked on stayed out of search until you opened the next session. Claude Code now also syncs when a session ends. If another sync is already running, the new one asks it to do one more quick pass when it finishes, instead of being skipped. Codex keeps syncing at session start, because it has no session-end event.
+- **The log says why a background sync stopped.** About 1 in 4 background syncs (67 of 291 since 1.6.0) stopped partway and logged nothing. Each stop is now logged in `~/.config/superpowers/logs/episodic-memory.log`: `sync stopped by SIGTERM`, `sync exited with code 1`, or, for a hard kill that can't be caught, `previous sync (pid 1234) ended without finishing` on the next run.
+
+### Changed
+- **Summaries go to recent work first, and more of them get written.** Each sync wrote 10 summaries in A–Z project order, so the backlog never shrank (61% of conversations had none) and old sessions got captions before yesterday's. Sync now summarizes the newest conversations first, up to 50 per run (`--limit`), and stops starting new ones after 5 minutes. Change the time limit with `EPISODIC_MEMORY_SUMMARY_BUDGET_SEC`; `0` turns it off. `episodic-memory index` still summarizes everything with no limit.
+
 ## [1.7.0] - 2026-10-13
 
 ### Changed

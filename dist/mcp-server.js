@@ -27637,7 +27637,7 @@ ${result}
 }
 
 // src/version.ts
-var VERSION = "1.7.0";
+var VERSION = "1.8.0";
 
 // src/mcp-server.ts
 init_paths();

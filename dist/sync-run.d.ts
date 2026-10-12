@@ -1,8 +1,8 @@
 export declare const tildify: (p: string) => string;
-/**
- * Take the single-instance sync lock (#97) and release it on every exit.
- * Returns a "held by" label when another process already has it.
- */
+/** Ask the running sync for one more pass when it finishes (a sync skipped on the lock). */
+export declare function requestRerun(): void;
+/** Consume a pending rerun request. True at most once per batch of requests. */
+export declare function takeRerunRequest(): boolean;
 export declare function acquireSyncLock(): {
     ok: true;
 } | {
@@ -11,6 +11,7 @@ export declare function acquireSyncLock(): {
 };
 export interface RunSyncOptions {
     summaryLimit?: number;
+    summaryBudgetMs?: number;
     concurrency?: number;
     skipSummaries?: boolean;
 }

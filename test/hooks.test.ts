@@ -61,6 +61,25 @@ describe('plugin hook configuration', () => {
   }
 });
 
+// SessionStart alone left a finished session unsearchable until the next one
+// started. Claude Code also syncs on SessionEnd; Codex has no session-end
+// event (its Stop fires after every turn), so it keeps SessionStart only.
+describe('SessionEnd sync', () => {
+  const load = (file: string) => JSON.parse(readFileSync(join(REPO_ROOT, file), 'utf-8')).hooks;
+
+  it('Claude Code runs the same guarded background sync when a session ends', () => {
+    const hooks = load('hooks/hooks.json');
+    const end = hooks.SessionEnd?.[0];
+    expect(end, 'hooks/hooks.json must declare SessionEnd').toBeDefined();
+    expect(end.matcher).toBeUndefined();
+    expect(end.hooks[0]).toEqual(hooks.SessionStart[0].hooks[0]);
+  });
+
+  it('Codex declares no SessionEnd', () => {
+    expect(load('hooks/hooks-codex.json').SessionEnd).toBeUndefined();
+  });
+});
+
 // The MCP server is launched by two different hosts that resolve paths in
 // incompatible ways, so each gets its own manifest and neither may regress:
 //

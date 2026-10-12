@@ -8,7 +8,8 @@ import { generateExchangeEmbedding, initEmbeddings } from './embeddings.js';
 import { runMigrationBatch, countStale } from './embedding-migration.js';
 import path from 'path';
 import os from 'os';
-import { getSyncLogPath } from './logging.js';
+import fs from 'fs';
+import { formatLogLine, getSyncLogPath } from './logging.js';
 import { acquireFileLock, readLockHolder, releaseFileLock } from './file-lock.js';
 import { createSyncReporter, formatSyncSummary, fullProjectName } from './sync-report.js';
 
@@ -18,24 +19,68 @@ export const tildify = (p: string) => (p.startsWith(os.homedir()) ? '~' + p.slic
  * Take the single-instance sync lock (#97) and release it on every exit.
  * Returns a "held by" label when another process already has it.
  */
+const syncLockPath = () => path.join(path.dirname(getSyncLogPath()), 'episodic-memory-sync.lock');
+const rerunPath = () => path.join(path.dirname(getSyncLogPath()), 'episodic-memory-sync.rerun');
+
+/** Ask the running sync for one more pass when it finishes (a sync skipped on the lock). */
+export function requestRerun(): void {
+  try {
+    fs.writeFileSync(rerunPath(), String(process.pid));
+  } catch {}
+}
+
+/** Consume a pending rerun request. True at most once per batch of requests. */
+export function takeRerunRequest(): boolean {
+  try {
+    fs.unlinkSync(rerunPath());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function acquireSyncLock(): { ok: true } | { ok: false; holder: string } {
-  const syncLockPath = path.join(path.dirname(getSyncLogPath()), 'episodic-memory-sync.lock');
-  const syncLock = acquireFileLock(syncLockPath);
+  const lockPath = syncLockPath();
+  const previous = readLockHolder(lockPath);
+  const syncLock = acquireFileLock(lockPath);
   if (!syncLock) {
-    const holder = readLockHolder(syncLockPath);
+    const holder = readLockHolder(lockPath);
     return { ok: false, holder: holder !== null ? `pid ${holder}` : 'another process' };
   }
+  // We stole a lock from a dead holder: that run was SIGKILLed or crashed hard,
+  // so it never got to log anything itself.
+  if (previous !== null && previous !== process.pid) {
+    logStop(`previous sync (pid ${previous}) ended without finishing (killed or crashed)`);
+  }
+
   let released = false;
   const release = () => {
     if (released) return;
     released = true;
     releaseFileLock(syncLock);
   };
-  process.on('exit', release);
-  process.on('SIGINT', () => { release(); process.exit(130); });
-  process.on('SIGTERM', () => { release(); process.exit(143); });
-  process.on('SIGHUP', () => { release(); process.exit(129); });
+  let signalled = false;
+  process.on('exit', code => {
+    if (code !== 0 && !signalled) logStop(`sync exited with code ${code}`);
+    release();
+  });
+  const onSignal = (signal: NodeJS.Signals, code: number) => () => {
+    signalled = true;
+    logStop(`sync stopped by ${signal}`);
+    release();
+    process.exit(code);
+  };
+  process.on('SIGINT', onSignal('SIGINT', 130));
+  process.on('SIGTERM', onSignal('SIGTERM', 143));
+  process.on('SIGHUP', onSignal('SIGHUP', 129));
   return { ok: true };
+}
+
+/** stderr is the hook log for a background sync; write synchronously so it lands before exit. */
+function logStop(message: string): void {
+  try {
+    fs.writeSync(2, formatLogLine('warn', message));
+  } catch {}
 }
 
 const isCodexSource = (sourceDir: string) => sourceDir.includes(`${path.sep}.codex${path.sep}`);
@@ -65,6 +110,7 @@ function planProjects(sourceDirs: string[], destDir: string): Array<ProjectGroup
 
 export interface RunSyncOptions {
   summaryLimit?: number;
+  summaryBudgetMs?: number;
   concurrency?: number;
   skipSummaries?: boolean;
 }
