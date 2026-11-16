@@ -83,3 +83,58 @@ describe('sync distills on copy', () => {
     ]);
   }, testTimeoutMs(120000));
 });
+
+describe('index command distills on copy', () => {
+  let testDir: string;
+  let projectsDir: string;
+  let archiveDir: string;
+  let dbPath: string;
+  let restoreConsole: () => void;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'em-index-distill-'));
+    projectsDir = join(testDir, 'projects');
+    archiveDir = join(testDir, 'archive');
+    dbPath = join(testDir, 'test.db');
+    mkdirSync(join(projectsDir, 'proj'), { recursive: true });
+    process.env.TEST_PROJECTS_DIR = projectsDir;
+    process.env.TEST_ARCHIVE_DIR = archiveDir;
+    process.env.TEST_DB_PATH = dbPath;
+    process.env.EPISODIC_MEMORY_CONFIG_DIR = join(testDir, 'config');
+    restoreConsole = suppressConsole();
+  });
+
+  afterEach(() => {
+    restoreConsole();
+    for (const k of ['TEST_PROJECTS_DIR', 'TEST_ARCHIVE_DIR', 'TEST_DB_PATH', 'EPISODIC_MEMORY_CONFIG_DIR']) delete process.env[k];
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('indexUnprocessed archives distilled, numbers lines from the archive, and re-indexes a raw archive whole', async () => {
+    const { indexUnprocessed } = await import('../src/indexer.js');
+    const src = join(projectsDir, 'proj', 'c.jsonl');
+    const dest = join(archiveDir, 'proj', 'c.jsonl');
+    writeFileSync(src, turn('old question', 'old answer'));
+    // A raw archive indexed before distill existed.
+    mkdirSync(join(archiveDir, 'proj'), { recursive: true });
+    copyFileSync(src, dest);
+    utimesSync(dest, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+    await indexUnprocessed(1, true);
+    expect(rows(dbPath)).toEqual([{ user_message: 'old question', line_start: 1 }]);
+
+    appendFileSync(src, turn('new question', 'new answer'));
+    utimesSync(src, new Date(Date.now() + 10000), new Date(Date.now() + 10000));
+    await indexUnprocessed(1, true);
+
+    expect(readFileSync(dest, 'utf8')).not.toContain('"progress"');
+    expect(rows(dbPath)).toEqual([
+      { user_message: 'old question', line_start: 1 },
+      { user_message: 'new question', line_start: 3 },
+    ]);
+
+    // A current distilled archive is not re-copied.
+    const before = readFileSync(dest);
+    await indexUnprocessed(1, true);
+    expect(readFileSync(dest).equals(before)).toBe(true);
+  }, testTimeoutMs(120000));
+});
