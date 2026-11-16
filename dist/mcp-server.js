@@ -7960,6 +7960,14 @@ function clearSequence(height) {
   return seq + CLEAR_LINE;
 }
 function createLiveRegion(output2, options = {}) {
+  let region = shared.get(output2);
+  if (!region) {
+    region = buildLiveRegion(output2, options);
+    shared.set(output2, region);
+  }
+  return region;
+}
+function buildLiveRegion(output2, options) {
   const tty = Boolean(output2.isTTY);
   const now = options.now ?? Date.now;
   const sab = new SharedArrayBuffer(TEXT_OFFSET + TEXT_CAPACITY);
@@ -8003,20 +8011,22 @@ function createLiveRegion(output2, options = {}) {
     if (process.listenerCount("SIGINT") === 0) process.exit(130);
   };
   const startTicker = () => {
-    if (ticker || !tty) return;
+    if (!tty) return;
     if (!cursorHidden) {
       cursorHidden = true;
       output2.write(HIDE_CURSOR);
       process.once("exit", restoreCursor);
       process.once("SIGINT", onSigint);
     }
+    if (ticker) return;
     if (useWorker && fd !== void 0) {
       try {
         const worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { sab, fd, frames: FRAMES, interval: FRAME_INTERVAL_MS } });
         worker.unref();
         worker.on("error", () => {
         });
-        ticker = { stop: () => void worker.terminate() };
+        ticker = { stop: () => {
+        } };
         return;
       } catch {
       }
@@ -8034,8 +8044,10 @@ function createLiveRegion(output2, options = {}) {
     ticker = { stop: () => clearInterval(timer) };
   };
   const stopTicker = () => {
-    ticker?.stop();
-    ticker = void 0;
+    if (!useWorker || fd === void 0) {
+      ticker?.stop();
+      ticker = void 0;
+    }
     restoreCursor();
     process.removeListener("exit", restoreCursor);
     process.removeListener("SIGINT", onSigint);
@@ -8095,7 +8107,7 @@ function createLiveRegion(output2, options = {}) {
     }
   };
 }
-var FRAMES, FRAME_INTERVAL_MS, CLEAR_LINE, CURSOR_UP, HIDE_CURSOR, SHOW_CURSOR, FRAME_TOKEN, ELAPSED_TOKEN, TOKEN_SLACK, ANSI_RE, LOCK, HEIGHT, TEXT_LEN, FRAME, STARTED_OFFSET, TEXT_OFFSET, TEXT_CAPACITY, WORKER_SOURCE;
+var FRAMES, FRAME_INTERVAL_MS, CLEAR_LINE, CURSOR_UP, HIDE_CURSOR, SHOW_CURSOR, FRAME_TOKEN, ELAPSED_TOKEN, TOKEN_SLACK, ANSI_RE, LOCK, HEIGHT, TEXT_LEN, FRAME, STARTED_OFFSET, TEXT_OFFSET, TEXT_CAPACITY, WORKER_SOURCE, shared;
 var init_live_region = __esm({
   "src/live-region.ts"() {
     "use strict";
@@ -8145,6 +8157,7 @@ setInterval(() => {
   }
 }, interval);
 `;
+    shared = /* @__PURE__ */ new WeakMap();
   }
 });
 

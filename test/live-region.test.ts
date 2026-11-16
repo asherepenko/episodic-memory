@@ -66,3 +66,23 @@ describe('fitWidth', () => {
     expect(fitWidth('short', 20)).toBe('short');
   });
 });
+
+describe('createLiveRegion reuse', () => {
+  it('can stop and restart the spinner many times without hanging', async () => {
+    const { file, output } = fdOutput();
+    const region = createLiveRegion(output);
+    for (let i = 0; i < 20; i++) {
+      region.set([`${FRAME_TOKEN} task ${i}`], Date.now());
+      await new Promise(r => setTimeout(r, 15));
+      region.stop();
+    }
+    region.set([`${FRAME_TOKEN} last`], Date.now());
+    region.stop();
+    expect(fs.readFileSync(file, 'utf-8')).toContain('last');
+  });
+
+  it('returns the same region for the same stream', () => {
+    const out = { isTTY: false, write: () => {} };
+    expect(createLiveRegion(out)).toBe(createLiveRegion(out));
+  });
+});

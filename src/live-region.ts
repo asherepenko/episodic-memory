@@ -140,8 +140,19 @@ export interface LiveRegion {
 
 type Ticker = { stop(): void };
 
+const shared = new WeakMap<ProgressOutput, LiveRegion>();
+
 /** One region per stream; commands share it so two renderers never fight over the rows. */
 export function createLiveRegion(output: ProgressOutput, options: LiveRegionOptions = {}): LiveRegion {
+  let region = shared.get(output);
+  if (!region) {
+    region = buildLiveRegion(output, options);
+    shared.set(output, region);
+  }
+  return region;
+}
+
+function buildLiveRegion(output: ProgressOutput, options: LiveRegionOptions): LiveRegion {
   const tty = Boolean(output.isTTY);
   const now = options.now ?? Date.now;
   const sab = new SharedArrayBuffer(TEXT_OFFSET + TEXT_CAPACITY);
@@ -194,19 +205,23 @@ export function createLiveRegion(output: ProgressOutput, options: LiveRegionOpti
   };
 
   const startTicker = () => {
-    if (ticker || !tty) return;
+    if (!tty) return;
     if (!cursorHidden) {
       cursorHidden = true;
       output.write(HIDE_CURSOR);
       process.once('exit', restoreCursor);
       process.once('SIGINT', onSigint);
     }
+    if (ticker) return;
     if (useWorker && fd !== undefined) {
       try {
         const worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { sab, fd, frames: FRAMES, interval: FRAME_INTERVAL_MS } });
         worker.unref();
         worker.on('error', () => {});
-        ticker = { stop: () => void worker.terminate() };
+        // Never terminate: a worker killed while holding the lock would leave
+        // it held and hang the next draw. With no text it idles; it is unref'd,
+        // so it dies with the process.
+        ticker = { stop: () => {} };
         return;
       } catch {
         // Fall through to the main-thread ticker.
@@ -226,8 +241,11 @@ export function createLiveRegion(output: ProgressOutput, options: LiveRegionOpti
   };
 
   const stopTicker = () => {
-    ticker?.stop();
-    ticker = undefined;
+    // The worker ticker is kept (see startTicker); only the interval fallback stops.
+    if (!useWorker || fd === undefined) {
+      ticker?.stop();
+      ticker = undefined;
+    }
     restoreCursor();
     process.removeListener('exit', restoreCursor);
     process.removeListener('SIGINT', onSigint);
