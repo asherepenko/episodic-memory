@@ -1,7 +1,8 @@
 import os from 'os';
 import path from 'path';
 import { setActiveProgress } from './progress.js';
-import { ANSI, CLEAR_LINE, CURSOR_UP, FRAMES, FRAME_INTERVAL_MS, formatBar, formatDuration, num, plural, truncateMiddle } from './cli-ui.js';
+import { ANSI, formatBar, formatDuration, num, plural, truncateMiddle } from './cli-ui.js';
+import { createLiveRegion, ELAPSED_TOKEN, FRAME_TOKEN } from './live-region.js';
 export { formatBar, formatDuration };
 const NAME_WIDTH = 36;
 function firstLine(text, width) {
@@ -71,78 +72,42 @@ export function createSyncReporter(output = process.stderr, options = {}) {
     const now = options.now ?? Date.now;
     const paint = (tone, text) => (color ? `\u001b[${ANSI[tone]}m${text}\u001b[0m` : text);
     // Live region (TTY only): the running row and the progress bar, redrawn in place.
+    const region = createLiveRegion(output, { now });
     let live;
     let bar;
-    let liveHeight = 0;
-    let frame = 0;
-    let timer;
     let pendingHeading;
     // Summaries run in parallel; rows are numbered in the order they finish.
     const summarizing = new Map(); // file → display name
     let summariesFinished = 0;
     let summariesCounted = false;
-    const liveLines = () => {
-        const lines = [];
-        if (live)
-            lines.push(`${live.prefix} ${paint('yellow', `${FRAMES[frame]}  ${live.label}`)}`);
-        if (bar)
-            lines.push(`${paint('dim', formatBar(bar.done, bar.total))}  ${bar.done}/${bar.total} · ${formatDuration(now() - bar.startedAt)}`);
-        return lines;
-    };
-    const clearLive = () => {
-        let out = '';
-        for (let i = 1; i < liveHeight; i++)
-            out += CLEAR_LINE + CURSOR_UP;
-        liveHeight = 0;
-        return out + CLEAR_LINE;
-    };
     const render = () => {
         if (!tty)
             return;
-        const lines = liveLines();
-        if (lines.length === 0 && liveHeight === 0)
-            return;
-        output.write(clearLive() + lines.join('\n'));
-        liveHeight = lines.length;
-    };
-    const syncTimer = () => {
-        if (!tty)
-            return;
-        const active = Boolean(live || bar);
-        if (active && !timer) {
-            timer = setInterval(() => {
-                frame = (frame + 1) % FRAMES.length;
-                render();
-            }, FRAME_INTERVAL_MS);
-            timer.unref?.();
-        }
-        else if (!active && timer) {
-            clearInterval(timer);
-            timer = undefined;
-        }
+        const lines = [];
+        if (live)
+            lines.push(`${live.prefix} ${paint('yellow', `${FRAME_TOKEN}  ${live.label}`)}`);
+        if (bar)
+            lines.push(`${paint('dim', formatBar(bar.done, bar.total))}  ${bar.done}/${bar.total} · ${ELAPSED_TOKEN}`);
+        region.set(lines, bar?.startedAt ?? now());
     };
     const flushHeading = () => {
         if (pendingHeading === undefined)
             return;
-        output.write(`${tty ? clearLive() : ''}\n${paint('bold', pendingHeading)}\n`);
+        region.print(`\n${paint('bold', pendingHeading)}\n`);
         pendingHeading = undefined;
     };
     const setLive = (next) => {
-        if (next && !live)
-            frame = 0;
         live = next;
         if (!tty)
             return;
         if (live)
             flushHeading();
-        syncTimer();
         render();
     };
-    // A finished row replaces the live region, which is then redrawn below it.
+    // A finished row prints above the live region, which is redrawn below it.
     const printLine = (line) => {
         flushHeading();
-        output.write(tty ? `${clearLive()}${line}\n` : `${line}\n`);
-        render();
+        region.print(`${line}\n`);
     };
     const prefixFor = (index, total, name) => `${counter(index, total)} ${name.padEnd(NAME_WIDTH)}`;
     const nameOf = (event) => event.label ?? displayProjectName(event.project, home);
@@ -152,7 +117,6 @@ export function createSyncReporter(output = process.stderr, options = {}) {
     return {
         start(totalRows) {
             bar = { done: 0, total: totalRows, startedAt: now() };
-            syncTimer();
             render();
         },
         onEvent(event) {
@@ -195,8 +159,8 @@ export function createSyncReporter(output = process.stderr, options = {}) {
                         const indent = ' '.repeat(counter(event.index, event.total).length + 1);
                         row += `\n${indent}${paint('dim', `└ ${plural(event.worktrees, 'worktree')}`)}`;
                     }
+                    render();
                     printLine(row);
-                    syncTimer();
                     return;
                 }
                 case 'summary-start': {
@@ -215,6 +179,7 @@ export function createSyncReporter(output = process.stderr, options = {}) {
                     live = undefined;
                     if (bar)
                         bar.done++;
+                    render();
                     const name = sessionLabel(event.file, event.project, home);
                     printLine(event.ok
                         ? formatRow(event.index, event.total, name, paint('green', '✓'), `summarized in ${formatDuration(event.ms)}`)
@@ -232,12 +197,9 @@ export function createSyncReporter(output = process.stderr, options = {}) {
             live = undefined;
             const finalBar = bar;
             bar = undefined;
-            syncTimer();
-            if (tty) {
-                if (liveHeight > 0)
-                    output.write(clearLive());
+            region.stop();
+            if (tty)
                 setActiveProgress(undefined);
-            }
             if (summary === undefined)
                 return;
             const total = finalBar?.total ?? 0;

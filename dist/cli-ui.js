@@ -1,6 +1,8 @@
 import os from 'os';
 import { createInterface } from 'readline';
 import { setActiveProgress } from './progress.js';
+import { createLiveRegion, ELAPSED_TOKEN, FRAME_TOKEN, formatDuration } from './live-region.js';
+export { CLEAR_LINE, CURSOR_UP, FRAMES, FRAME_INTERVAL_MS, formatDuration } from './live-region.js';
 /**
  * Shared terminal look for every command, matching `sync`: bold section
  * headings, aligned rows with a colored status symbol, dim "└" details, a
@@ -8,24 +10,16 @@ import { setActiveProgress } from './progress.js';
  * "━━━ done in 12s · …" line.
  *
  * Content goes to stdout so it can be piped. The live spinner/bar goes to
- * stderr, and only when stderr is a terminal; off a terminal nothing animates.
+ * stderr through a LiveRegion, and only when stderr is a terminal; off a
+ * terminal nothing animates. The region ticks from a worker thread, so the
+ * spinner keeps moving through synchronous SQLite work.
  */
-export const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-export const FRAME_INTERVAL_MS = 120;
-export const CLEAR_LINE = '\r\u001b[2K';
-export const CURSOR_UP = '\u001b[1A';
 export const BAR_WIDTH = 22;
 export const LABEL_WIDTH = 18;
 export const ANSI = { yellow: 33, green: 32, cyan: 36, red: 31, bold: 1, dim: 2 };
 export const num = (n) => n.toLocaleString('en-US');
 export function plural(n, word, many = `${word}s`) {
     return `${num(n)} ${n === 1 ? word : many}`;
-}
-export function formatDuration(ms) {
-    const s = Math.round(ms / 1000);
-    if (s < 60)
-        return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 export function formatBar(done, total) {
     const filled = total > 0 ? Math.min(BAR_WIDTH, Math.round((done / total) * BAR_WIDTH)) : BAR_WIDTH;
@@ -69,43 +63,18 @@ export function createUi(options = {}) {
     const now = options.now ?? Date.now;
     const paint = (tone, text) => (color ? `\u001b[${ANSI[tone]}m${text}\u001b[0m` : text);
     // Live region (stderr TTY only): spinner row + optional bar, redrawn in place.
+    const region = createLiveRegion(live, { now });
     let spinner;
-    let liveHeight = 0;
-    let frame = 0;
-    let timer;
-    const liveLines = () => {
+    const showSpinner = () => {
         if (!spinner)
-            return [];
-        const lines = [`  ${paint('yellow', `${FRAMES[frame]}  ${spinner.label}`)}`];
+            return region.set([]);
+        const lines = [`  ${paint('yellow', `${FRAME_TOKEN}  ${spinner.label}`)}`];
         if (spinner.of > 0) {
-            lines.push(`${paint('dim', formatBar(spinner.done, spinner.of))}  ${num(spinner.done)}/${num(spinner.of)} · ${formatDuration(now() - spinner.startedAt)}`);
+            lines.push(`${paint('dim', formatBar(spinner.done, spinner.of))}  ${num(spinner.done)}/${num(spinner.of)} · ${ELAPSED_TOKEN}`);
         }
-        return lines;
+        region.set(lines, spinner.startedAt);
     };
-    const clearLive = () => {
-        if (!liveTty || liveHeight === 0)
-            return;
-        let seq = '';
-        for (let i = 1; i < liveHeight; i++)
-            seq += CLEAR_LINE + CURSOR_UP;
-        live.write(seq + CLEAR_LINE);
-        liveHeight = 0;
-    };
-    const render = () => {
-        if (!liveTty)
-            return;
-        clearLive();
-        const lines = liveLines();
-        if (lines.length === 0)
-            return;
-        live.write(lines.join('\n'));
-        liveHeight = lines.length;
-    };
-    const line = (text = '') => {
-        clearLive();
-        out.write(`${text}\n`);
-        render();
-    };
+    const line = (text = '') => region.print(`${text}\n`, out);
     const pad = (label) => label.padEnd(LABEL_WIDTH);
     return {
         color,
@@ -129,17 +98,10 @@ export function createUi(options = {}) {
         },
         async task(label, work) {
             spinner = { label, done: 0, of: 0, startedAt: now() };
-            frame = 0;
-            if (liveTty) {
-                // Log lines written by deep code (logger.info) go above the spinner.
+            // Log lines written by deep code (logger.info) go above the spinner.
+            if (liveTty)
                 setActiveProgress({ writeLine: message => line(message) });
-                timer = setInterval(() => {
-                    frame = (frame + 1) % FRAMES.length;
-                    render();
-                }, FRAME_INTERVAL_MS);
-                timer.unref?.();
-                render();
-            }
+            showSpinner();
             try {
                 return await work({
                     update(done, of, next) {
@@ -149,16 +111,13 @@ export function createUi(options = {}) {
                         spinner.of = of;
                         if (next !== undefined)
                             spinner.label = next;
-                        render();
+                        showSpinner();
                     },
                 });
             }
             finally {
-                if (timer)
-                    clearInterval(timer);
-                timer = undefined;
                 spinner = undefined;
-                clearLive();
+                region.stop();
                 if (liveTty)
                     setActiveProgress(undefined);
             }
@@ -173,7 +132,7 @@ export function createUi(options = {}) {
         async confirm(question, fallback = false) {
             if (!interactive)
                 return fallback;
-            clearLive();
+            region.stop();
             const rl = createInterface({ input: process.stdin, output: out });
             const hint = fallback ? '[Y/n]' : '[y/N]';
             const answer = await new Promise(resolve => rl.question(`${question} ${paint('dim', hint)} `, resolve));

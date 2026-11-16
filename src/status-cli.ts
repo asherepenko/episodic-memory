@@ -2,12 +2,10 @@ import fs from 'fs';
 import { getDbPath } from './paths.js';
 import { getSyncLogPath } from './logging.js';
 import { getIndexStats, type IndexStats } from './stats.js';
-import { openDatabase } from './db.js';
-import { countStale } from './embedding-migration.js';
 import { isNativeBindingError } from './native-binding.js';
 import { countSyncStates } from './sync/index.js';
 import { renderStatus, type StatusInput } from './status.js';
-import { createUi } from './cli-ui.js';
+import { createUi, type TaskProgress } from './cli-ui.js';
 
 const args = process.argv.slice(2);
 
@@ -35,11 +33,11 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
   const input = await ui.task('reading index...', gather);
   const ok = renderStatus(ui, input);
-  ui.done(startedAt, [ok ? 'engine healthy' : 'engine unhealthy'], { ok, verb: 'checked' });
+  ui.done(startedAt, [], { ok, verb: 'checked' });
   process.exit(ok ? 0 : 1);
 }
 
-async function gather(): Promise<StatusInput> {
+async function gather(progress: TaskProgress): Promise<StatusInput> {
   const dbPath = getDbPath();
   const dbExists = fs.existsSync(dbPath);
 
@@ -51,15 +49,10 @@ async function gather(): Promise<StatusInput> {
   // Opening the DB loads the better-sqlite3 native binding — so this doubles as
   // the binding health check. A native-binding failure is reported, not thrown.
   try {
-    stats = await getIndexStats(dbPath);
-    if (dbExists) {
-      const db = openDatabase(dbPath, { readonly: true });
-      try {
-        staleEmbeddings = countStale(db);
-      } finally {
-        db.close();
-      }
-    }
+    stats = await getIndexStats(dbPath, {
+      onProgress: (done, of) => progress.update(done, of, 'checking summaries...'),
+    });
+    staleEmbeddings = stats.staleEmbeddings ?? 0;
   } catch (err) {
     if (isNativeBindingError(err)) {
       nativeBindingOk = false;
@@ -70,6 +63,7 @@ async function gather(): Promise<StatusInput> {
   }
 
   let poison = 0;
+  progress.update(0, 0, 'reading sync state...');
   try {
     poison = countSyncStates().poison;
   } catch {

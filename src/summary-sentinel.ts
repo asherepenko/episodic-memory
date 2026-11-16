@@ -15,12 +15,11 @@ import * as fs from 'fs';
  * and useful" (stats, verify, search).
  */
 export function hasRealSummary(summaryPath: string): boolean {
-  if (!fs.existsSync(summaryPath)) return false;
-  let content: string;
+  // Size from one stat call: non-empty bytes means a non-empty summary, and
+  // stats checks ~30k of these, so skipping open+read+close matters.
   try {
-    content = fs.readFileSync(summaryPath, 'utf-8');
+    return fs.statSync(summaryPath).size > 0;
   } catch {
     return false;
   }
-  return content.length > 0;
 }

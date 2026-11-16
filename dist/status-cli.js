@@ -2,8 +2,6 @@ import fs from 'fs';
 import { getDbPath } from './paths.js';
 import { getSyncLogPath } from './logging.js';
 import { getIndexStats } from './stats.js';
-import { openDatabase } from './db.js';
-import { countStale } from './embedding-migration.js';
 import { isNativeBindingError } from './native-binding.js';
 import { countSyncStates } from './sync/index.js';
 import { renderStatus } from './status.js';
@@ -31,10 +29,10 @@ async function main() {
     const startedAt = Date.now();
     const input = await ui.task('reading index...', gather);
     const ok = renderStatus(ui, input);
-    ui.done(startedAt, [ok ? 'engine healthy' : 'engine unhealthy'], { ok, verb: 'checked' });
+    ui.done(startedAt, [], { ok, verb: 'checked' });
     process.exit(ok ? 0 : 1);
 }
-async function gather() {
+async function gather(progress) {
     const dbPath = getDbPath();
     const dbExists = fs.existsSync(dbPath);
     let nativeBindingOk = true;
@@ -44,16 +42,10 @@ async function gather() {
     // Opening the DB loads the better-sqlite3 native binding — so this doubles as
     // the binding health check. A native-binding failure is reported, not thrown.
     try {
-        stats = await getIndexStats(dbPath);
-        if (dbExists) {
-            const db = openDatabase(dbPath, { readonly: true });
-            try {
-                staleEmbeddings = countStale(db);
-            }
-            finally {
-                db.close();
-            }
-        }
+        stats = await getIndexStats(dbPath, {
+            onProgress: (done, of) => progress.update(done, of, 'checking summaries...'),
+        });
+        staleEmbeddings = stats.staleEmbeddings ?? 0;
     }
     catch (err) {
         if (isNativeBindingError(err)) {
@@ -65,6 +57,7 @@ async function gather() {
         }
     }
     let poison = 0;
+    progress.update(0, 0, 'reading sync state...');
     try {
         poison = countSyncStates().poison;
     }

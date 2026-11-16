@@ -1,4 +1,5 @@
 import { type ProgressOutput } from './progress.js';
+export { CLEAR_LINE, CURSOR_UP, FRAMES, FRAME_INTERVAL_MS, formatDuration } from './live-region.js';
 /**
  * Shared terminal look for every command, matching `sync`: bold section
  * headings, aligned rows with a colored status symbol, dim "└" details, a
@@ -6,12 +7,10 @@ import { type ProgressOutput } from './progress.js';
  * "━━━ done in 12s · …" line.
  *
  * Content goes to stdout so it can be piped. The live spinner/bar goes to
- * stderr, and only when stderr is a terminal; off a terminal nothing animates.
+ * stderr through a LiveRegion, and only when stderr is a terminal; off a
+ * terminal nothing animates. The region ticks from a worker thread, so the
+ * spinner keeps moving through synchronous SQLite work.
  */
-export declare const FRAMES: string[];
-export declare const FRAME_INTERVAL_MS = 120;
-export declare const CLEAR_LINE = "\r\u001B[2K";
-export declare const CURSOR_UP = "\u001B[1A";
 export declare const BAR_WIDTH = 22;
 export declare const LABEL_WIDTH = 18;
 export declare const ANSI: {
@@ -25,7 +24,6 @@ export declare const ANSI: {
 export type Tone = keyof typeof ANSI;
 export declare const num: (n: number) => string;
 export declare function plural(n: number, word: string, many?: string): string;
-export declare function formatDuration(ms: number): string;
 export declare function formatBar(done: number, total: number): string;
 /** Cut the middle: the head says where a thing lives, the tail which one it is. */
 export declare function truncateMiddle(text: string, width: number): string;

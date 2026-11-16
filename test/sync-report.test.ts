@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSyncReporter, displayProjectName, formatRow, formatSyncSummary, fullProjectName } from '../src/sync-report.js';
 
 const CLEAR_LINE = '\r\u001b[2K';
-const stripAnsi = (s: string) => s.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
+const stripAnsi = (s: string) => s.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '');
+/** Drop cursor hide/show codes; the live region toggles them around the spinner. */
+const noCursor = (s: string) => s.replace(/\u001b\[\?25[lh]/g, '');
 
 afterEach(() => {
   vi.useRealTimers();
@@ -57,7 +59,7 @@ describe('createSyncReporter', () => {
     const reporter = createSyncReporter({ isTTY: true, write: s => { out += s; } }, { color: true, home });
 
     reporter.onEvent({ type: 'project-start', project: '-Users-andrew-Projects-auto-claude', index: 1, total: 2 });
-    expect(out).toBe(`${CLEAR_LINE}[1/2] auto-claude                          \u001b[33m⠋  syncing...\u001b[0m`);
+    expect(noCursor(out)).toBe(`${CLEAR_LINE}[1/2] auto-claude                          \u001b[33m⠋  syncing...\u001b[0m`);
 
     vi.advanceTimersByTime(120);
     expect(out.endsWith(`\u001b[33m⠙  syncing...\u001b[0m`)).toBe(true);
@@ -67,7 +69,8 @@ describe('createSyncReporter', () => {
 
     out = '';
     reporter.onEvent({ type: 'project-done', project: '-Users-andrew-Projects-auto-claude', index: 1, total: 2, copied: 0, indexed: 0, exchanges: 0, errors: 0 });
-    expect(out).toBe(`${CLEAR_LINE}[1/2] auto-claude                          \u001b[32m✓\u001b[0m  up to date\n`);
+    // The spinner row is cleared, then the finished row prints in its place.
+    expect(noCursor(out)).toBe(`${CLEAR_LINE}${CLEAR_LINE}[1/2] auto-claude                          \u001b[32m✓\u001b[0m  up to date\n`);
     reporter.finish();
   });
 

@@ -5,17 +5,7 @@ export interface ProgressOutput {
 export interface ActiveProgress {
     writeLine(message: string): void;
 }
-/** Register (or clear) the renderer that owns the terminal's live row. */
+/** Register (or clear) the renderer that owns the terminal's live rows. */
 export declare function setActiveProgress(progress: ActiveProgress | undefined): void;
-/** Write a terminal line without corrupting an active spinner row. */
+/** Write a terminal line without corrupting an active spinner. */
 export declare function writeProgressAwareLine(message: string, fallback: () => void): void;
-export interface ProgressIndicator {
-    start(): void;
-    update(label: string): void;
-    complete(label: string): void;
-}
-/**
- * Lightweight dependency-free progress feedback for long CLI operations.
- * stderr keeps progress out of stdout consumers and out of the MCP protocol.
- */
-export declare function createProgressIndicator(label: string, output?: ProgressOutput): ProgressIndicator;

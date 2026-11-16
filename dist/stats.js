@@ -47,7 +47,7 @@ export function countPendingIndex(archiveDir, dbPath = getDbPath()) {
     }
     return pending;
 }
-export async function getIndexStats(dbPath) {
+export async function getIndexStats(dbPath, options = {}) {
     const resolvedDbPath = dbPath || getDbPath();
     // Check if database exists
     const fs = await import('fs');
@@ -75,19 +75,20 @@ export async function getIndexStats(dbPath) {
                 projectCount: 0,
             };
         }
-        // Total conversations
-        const totalConversations = db.prepare('SELECT COUNT(DISTINCT archive_path) as count FROM exchanges').get();
         // Check for summaries (these are files, not DB fields). Only count
         // conversations with a real summary — skip empty zero-exchange sentinels
         // (#91) and error sentinels (#96) so stats reflect actual coverage.
         const { hasRealSummary } = await import('./summary-sentinel.js');
         const conversationPaths = db.prepare('SELECT DISTINCT archive_path FROM exchanges').all();
         let withSummariesCount = 0;
-        for (const { archive_path } of conversationPaths) {
-            const summaryPath = archive_path.replace('.jsonl', '-summary.txt');
+        const of = conversationPaths.length;
+        for (let i = 0; i < of; i++) {
+            const summaryPath = conversationPaths[i].archive_path.replace('.jsonl', '-summary.txt');
             if (hasRealSummary(summaryPath)) {
                 withSummariesCount++;
             }
+            if (options.onProgress && (i % 500 === 0 || i === of - 1))
+                options.onProgress(i + 1, of);
         }
         // Total exchanges
         const totalExchanges = db.prepare('SELECT COUNT(*) as count FROM exchanges').get();
@@ -114,9 +115,9 @@ export async function getIndexStats(dbPath) {
             // column absent on a partial/legacy schema — treat as none stale
         }
         return {
-            totalConversations: totalConversations.count,
+            totalConversations: conversationPaths.length,
             conversationsWithSummaries: withSummariesCount,
-            conversationsWithoutSummaries: totalConversations.count - withSummariesCount,
+            conversationsWithoutSummaries: conversationPaths.length - withSummariesCount,
             totalExchanges: totalExchanges.count,
             dateRange: dateRange?.earliest ? {
                 earliest: dateRange.earliest,

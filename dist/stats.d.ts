@@ -27,7 +27,11 @@ export interface IndexStats {
  * whole archive. Undefined when the DB predates indexed_files.
  */
 export declare function countPendingIndex(archiveDir: string, dbPath?: string): number | undefined;
-export declare function getIndexStats(dbPath?: string): Promise<IndexStats>;
+export interface IndexStatsOptions {
+    /** Called while summary files are checked: (checked so far, total). */
+    onProgress?: (done: number, of: number) => void;
+}
+export declare function getIndexStats(dbPath?: string, options?: IndexStatsOptions): Promise<IndexStats>;
 /** "Jan 12 → Oct 13, 2026", or with both years when the range spans years. */
 export declare function formatDateRange(earliest: string, latest: string): string;
 /** Draw the stats report through the shared UI kit. */

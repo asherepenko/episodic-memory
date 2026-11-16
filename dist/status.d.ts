@@ -25,9 +25,11 @@ export interface StatusReport {
     ok: boolean;
 }
 /**
- * Draw the at-a-glance health report. Returns `ok`, which reflects the core
- * engine (native binding loads + database present) — index emptiness and
- * pending summaries are normal early states, not failures.
+ * Draw the at-a-glance dashboard. Facts sit in one aligned column; anything
+ * that needs Andrew's attention is repeated at the bottom with its fix.
+ * Returns `ok`, which reflects the core engine (native binding loads +
+ * database present) — an empty index and pending summaries are normal early
+ * states, not failures.
  */
 export declare function renderStatus(ui: Ui, input: StatusInput): boolean;
 /** Plain-text rendering (no color, no animation); same layout as the terminal. */
