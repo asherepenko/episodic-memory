@@ -127,28 +127,40 @@ export function distillTranscript(text) {
     return parts[parts.length - 1] === '' && kept.length > 0 ? body + '\n' : body;
 }
 /**
+ * Above this size a conversation is archived raw: distilling reads it whole into
+ * one string, which V8 caps near 512 MB and which would strain the heap anyway.
+ */
+export const MAX_DISTILL_BYTES = 256 * 1024 * 1024;
+/**
  * Copy a live conversation into the archive, distilled. Copies when the
  * destination is missing or the source mtime is newer (the same rule the raw
  * copy used). Writes through a same-directory temp file and a rename.
  */
-export function copyDistilled(src, dest) {
+export function copyDistilled(src, dest, options = {}) {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    let old;
-    if (fs.existsSync(dest)) {
-        if (fs.lstatSync(dest).mtimeMs >= fs.lstatSync(src).mtimeMs)
-            return { copied: false, shifted: false };
-        old = fs.readFileSync(dest);
-    }
-    const next = Buffer.from(distillTranscript(fs.readFileSync(src, 'utf8')), 'utf8');
+    const srcStat = fs.lstatSync(src);
+    const destStat = fs.existsSync(dest) ? fs.lstatSync(dest) : undefined;
+    if (destStat && destStat.mtimeMs >= srcStat.mtimeMs)
+        return { copied: false, shifted: false };
     const tempDest = `${dest}.tmp.${process.pid}`;
-    try {
-        fs.writeFileSync(tempDest, next);
-        fs.renameSync(tempDest, dest);
+    const commit = (write) => {
+        try {
+            write();
+            fs.renameSync(tempDest, dest);
+        }
+        catch (error) {
+            fs.rmSync(tempDest, { force: true });
+            throw error;
+        }
+    };
+    if (srcStat.size > (options.maxDistillBytes ?? MAX_DISTILL_BYTES)) {
+        commit(() => fs.copyFileSync(src, tempDest));
+        // Not worth reading the old archive back to compare: assume its lines moved.
+        return { copied: true, shifted: destStat !== undefined };
     }
-    catch (error) {
-        fs.rmSync(tempDest, { force: true });
-        throw error;
-    }
+    const old = destStat ? fs.readFileSync(dest) : undefined;
+    const next = Buffer.from(distillTranscript(fs.readFileSync(src, 'utf8')), 'utf8');
+    commit(() => fs.writeFileSync(tempDest, next));
     const shifted = old !== undefined && !next.subarray(0, old.length).equals(old);
     return { copied: true, shifted };
 }

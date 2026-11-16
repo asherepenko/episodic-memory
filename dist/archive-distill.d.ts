@@ -19,8 +19,16 @@ export interface CopyResult {
     shifted: boolean;
 }
 /**
+ * Above this size a conversation is archived raw: distilling reads it whole into
+ * one string, which V8 caps near 512 MB and which would strain the heap anyway.
+ */
+export declare const MAX_DISTILL_BYTES: number;
+export interface CopyOptions {
+    maxDistillBytes?: number;
+}
+/**
  * Copy a live conversation into the archive, distilled. Copies when the
  * destination is missing or the source mtime is newer (the same rule the raw
  * copy used). Writes through a same-directory temp file and a rename.
  */
-export declare function copyDistilled(src: string, dest: string): CopyResult;
+export declare function copyDistilled(src: string, dest: string, options?: CopyOptions): CopyResult;

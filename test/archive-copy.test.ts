@@ -81,3 +81,41 @@ describe('purgeArchivePath', () => {
     }
   });
 });
+
+describe('copyDistilled size cap', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'em-cap-')); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('copies a conversation over the cap raw and reports an existing archive as shifted', () => {
+    const src = join(dir, 'src.jsonl');
+    const dest = join(dir, 'dest.jsonl');
+    writeFileSync(src, jl(user('a'), noise));
+    expect(copyDistilled(src, dest, { maxDistillBytes: 10 })).toEqual({ copied: true, shifted: false });
+    expect(readFileSync(dest).equals(readFileSync(src))).toBe(true);
+    utimesSync(dest, new Date(1000), new Date(1000));
+    expect(copyDistilled(src, dest, { maxDistillBytes: 10 })).toEqual({ copied: true, shifted: true });
+  });
+});
+
+describe('purge uses the archive_path index', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'em-plan-'));
+    process.env.TEST_DB_PATH = join(dir, 'db.sqlite');
+  });
+  afterEach(() => {
+    delete process.env.TEST_DB_PATH;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('finds a file\'s exchanges without scanning the table', () => {
+    const db = initDatabase();
+    try {
+      const plan = db.prepare('EXPLAIN QUERY PLAN SELECT id FROM exchanges WHERE archive_path = ?').all('/a') as Array<{ detail: string }>;
+      expect(plan.map(p => p.detail).join(' ')).toMatch(/USING (COVERING )?INDEX idx_archive_path/);
+    } finally {
+      db.close();
+    }
+  });
+});

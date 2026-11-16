@@ -93,3 +93,28 @@ describe('distillTranscript', () => {
     expect(rec.message.content[0].content).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 });
+
+describe('show renders distilled conversations', () => {
+  it('keeps each trimmed result under its tool call, including a marker toolUseResult', async () => {
+    const { formatConversationAsMarkdown } = await import('../src/show.js');
+    const raw = jl(
+      { type: 'user', uuid: 'u1', parentUuid: null, timestamp: '2026-01-01T12:00:00Z', message: { role: 'user', content: 'read the file' } },
+      { type: 'assistant', uuid: 'a1', parentUuid: 'u1', timestamp: '2026-01-01T12:00:01Z', message: { role: 'assistant', content: [
+        { type: 'text', text: 'Reading it now.' },
+        { type: 'tool_use', id: 'toolu_A', name: 'Read', input: { file_path: '/repo/a.ts' } },
+      ] } },
+      { type: 'user', uuid: 'r1', parentUuid: 'a1', timestamp: '2026-01-01T12:00:02Z', toolUseResult: { file: { content: 'Q'.repeat(9000) } }, message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'toolu_A', content: 'HEAD-OF-FILE' + 'Q'.repeat(9000) },
+      ] } },
+      { type: 'assistant', uuid: 'a2', parentUuid: 'r1', timestamp: '2026-01-01T12:00:03Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Done reading.' }] } },
+    );
+    const md = formatConversationAsMarkdown(distillTranscript(raw));
+    const call = md.indexOf('/repo/a.ts');
+    const result = md.indexOf('HEAD-OF-FILE');
+    expect(call).toBeGreaterThan(-1);
+    expect(result).toBeGreaterThan(call);
+    expect(md).toContain('trimmed, original');
+    expect(md).toContain('Done reading.');
+    expect(md).not.toContain('Q'.repeat(3000));
+  });
+});
