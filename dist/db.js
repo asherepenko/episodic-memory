@@ -292,6 +292,23 @@ export function getFileLastIndexed(db, archivePath) {
     const row = stmt.get(archivePath);
     return row.lastIndexed;
 }
+/**
+ * Forget everything indexed from one archived conversation, so it is indexed
+ * again from scratch. Needed when the file was rewritten and its line numbers
+ * moved: exchange ids hash the line range, so stale rows would otherwise stay.
+ * Returns the number of exchanges removed.
+ */
+export function purgeArchivePath(db, archivePath) {
+    ensureIndexedFilesTable(db);
+    return db.transaction(() => {
+        const where = 'SELECT id FROM exchanges WHERE archive_path = ?';
+        db.prepare(`DELETE FROM vec_exchanges WHERE id IN (${where})`).run(archivePath);
+        db.prepare(`DELETE FROM tool_calls WHERE exchange_id IN (${where})`).run(archivePath);
+        const removed = db.prepare('DELETE FROM exchanges WHERE archive_path = ?').run(archivePath).changes;
+        db.prepare('DELETE FROM indexed_files WHERE archive_path = ?').run(archivePath);
+        return removed;
+    })();
+}
 export function deleteExchange(db, id) {
     // Delete from vector table
     db.prepare(`DELETE FROM vec_exchanges WHERE id = ?`).run(id);

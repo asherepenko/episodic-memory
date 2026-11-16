@@ -45,6 +45,7 @@ COMMANDS:
   stats       Show index statistics
   status      At-a-glance health check (engine, index, sync, summaries)
   doctor      Diagnose Claude Code or Codex integration issues
+  backfill    Distill conversations archived before distilling existed
 
 Run 'episodic-memory <command> --help' for command-specific help.
 
@@ -90,6 +91,10 @@ async function main(): Promise<void> {
 
       case 'doctor':
         await runScript(join(distDir, 'doctor-cli.js'), args);
+        break;
+
+      case 'backfill':
+        await runScript(join(distDir, 'backfill-cli.js'), args);
         break;
 
       case 'sync':

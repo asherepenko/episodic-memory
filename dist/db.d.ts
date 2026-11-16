@@ -38,4 +38,11 @@ export declare function getAllExchanges(db: Database.Database): Array<{
     archivePath: string;
 }>;
 export declare function getFileLastIndexed(db: Database.Database, archivePath: string): number | null;
+/**
+ * Forget everything indexed from one archived conversation, so it is indexed
+ * again from scratch. Needed when the file was rewritten and its line numbers
+ * moved: exchange ids hash the line range, so stale rows would otherwise stay.
+ * Returns the number of exchanges removed.
+ */
+export declare function purgeArchivePath(db: Database.Database, archivePath: string): number;
 export declare function deleteExchange(db: Database.Database, id: string): void;

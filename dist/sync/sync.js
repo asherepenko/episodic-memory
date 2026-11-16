@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { SUMMARIZER_CONTEXT_MARKER } from '../constants.js';
+import { copyDistilled } from '../archive-distill.js';
 import { getExcludedProjects, findJsonlFiles, entryIsDirectory } from '../paths.js';
 import { log } from '../logger.js';
 import { openConversationSyncStateStore, isRetriable, MAX_ATTEMPTS, } from './conversation-sync-state.js';
@@ -74,26 +75,6 @@ export function orderNewestFirst(files, mtime = safeMtime) {
     const time = new Map(files.map(f => [f.path, mtime(f.path) ?? -Infinity]));
     return [...files].sort((a, b) => time.get(b.path) - time.get(a.path));
 }
-function copyIfNewer(src, dest) {
-    // Ensure destination directory exists
-    const destDir = path.dirname(dest);
-    if (!fs.existsSync(destDir)) {
-        fs.mkdirSync(destDir, { recursive: true });
-    }
-    // Check if destination exists and is up-to-date
-    if (fs.existsSync(dest)) {
-        const srcStat = fs.lstatSync(src);
-        const destStat = fs.lstatSync(dest);
-        if (destStat.mtimeMs >= srcStat.mtimeMs) {
-            return false; // Dest is current, skip
-        }
-    }
-    // Atomic copy: temp file + rename
-    const tempDest = dest + '.tmp.' + process.pid;
-    fs.copyFileSync(src, tempDest);
-    fs.renameSync(tempDest, dest); // Atomic on same filesystem
-    return true;
-}
 /**
  * Indexes archived transcripts that indexed_files says are missing or stale.
  * Opens the DB on first use and loads the embedding model only when a file
@@ -105,9 +86,9 @@ function createArchiveIndexer(excludedDirSet) {
     async function open() {
         if (state)
             return state;
-        const { initDatabase, insertExchange, getIndexedFileMtimes, markFileIndexed } = await import('../db.js');
+        const { initDatabase, insertExchange, getIndexedFileMtimes, markFileIndexed, purgeArchivePath } = await import('../db.js');
         const db = initDatabase();
-        state = { db, mtimes: getIndexedFileMtimes(db), markFileIndexed, insertExchange };
+        state = { db, mtimes: getIndexedFileMtimes(db), markFileIndexed, insertExchange, purgeArchivePath };
         return state;
     }
     return {
@@ -164,6 +145,11 @@ function createArchiveIndexer(excludedDirSet) {
             }
             onProgress?.(pending.length, pending.length);
             return out;
+        },
+        async purge(file) {
+            const { db, mtimes, purgeArchivePath } = await open();
+            purgeArchivePath(db, file);
+            mtimes.delete(file);
         },
         async listConversations() {
             const { db } = await open();
@@ -243,7 +229,11 @@ export function createSyncSession(destDir, options = {}) {
                 const srcFile = path.join(projectPath, file);
                 const destFile = path.join(destDir, project, file);
                 try {
-                    const wasCopied = copyIfNewer(srcFile, destFile);
+                    const { copied: wasCopied, shifted } = copyDistilled(srcFile, destFile);
+                    // The archive's old lines moved (e.g. a raw copy from before distill):
+                    // its indexed exchange ids no longer match, so re-index it whole.
+                    if (shifted)
+                        await indexer.purge(destFile);
                     let state;
                     if (wasCopied) {
                         result.copied++;
