@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-11-16
+
+### Fixed
+- **The spinner no longer freezes.** Database reads block the program while they run, and the spinner used to stop with them. `status` could sit on one frozen frame for 20 seconds. The spinner and progress bar now run in a separate thread, so they keep moving while the work runs. This applies to every command, `sync` included.
+- **No more broken redraws on narrow terminals.** Spinner lines longer than the terminal used to wrap and leave stray lines behind. They are now cut to fit. The cursor is hidden while a spinner runs and comes back on exit or Ctrl-C.
+
+### Changed
+- **`status` is a compact dashboard.** A single `● healthy` mark at the top, a summary progress bar with a percentage, done/pending/failed counts, and one line each for embeddings, engine and summary auth. Problems are listed at the bottom, each with the command that fixes it.
+- **`status` is 2–2.5× faster.** On an index of 28,858 conversations it dropped from 20.8s to 9.1s on a cold start and from 10.8s to 4.3s warm. It shows a progress bar while it checks summaries.
+
 ## [1.9.0] - 2026-10-13
 
 ### Fixed

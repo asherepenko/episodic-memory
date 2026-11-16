@@ -8285,7 +8285,7 @@ var VERSION;
 var init_version = __esm({
   "src/version.ts"() {
     "use strict";
-    VERSION = "1.9.0";
+    VERSION = "1.10.0";
   }
 });
 
