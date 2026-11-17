@@ -170,6 +170,26 @@ export function reciprocalRankFusionScored<T extends { id: string }>(
     .map(([id, score]) => ({ row: rowById.get(id)!, score }));
 }
 
+const STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'can', 'did', 'do', 'does', 'for', 'from',
+  'had', 'has', 'have', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'me', 'my', 'of', 'on',
+  'or', 'our', 'so', 'that', 'the', 'their', 'then', 'there', 'this', 'to', 'was', 'we', 'were',
+  'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'you', 'your',
+]);
+
+/**
+ * Turn a free-text query into an FTS5 MATCH expression: word tokens (letters,
+ * digits, `_`), lower-cased, stop words dropped, each quoted so FTS syntax in
+ * the query is inert, OR-joined so BM25 ranks partial matches. null when
+ * nothing searchable is left.
+ */
+export function buildLexicalQuery(query: string): string | null {
+  const tokens = (query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
+    .filter(t => t.length > 1 && !STOP_WORDS.has(t));
+  const unique = [...new Set(tokens)];
+  return unique.length ? unique.map(t => `"${t}"`).join(' OR ') : null;
+}
+
 /** Logistic squash of a cross-encoder logit into 0-1. */
 function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
@@ -230,25 +250,24 @@ export async function searchConversations(
   }
 
   if (mode === 'text' || mode === 'both') {
-    // Text search
-    const textStmt = db.prepare(`
+    // Lexical search: BM25 over the FTS5 index, user side weighted double.
+    const match = buildLexicalQuery(query);
+    const textResults = match === null ? [] : db.prepare(`
       SELECT
         ${EXCHANGE_SELECT_COLUMNS},
         0 as distance
-      FROM exchanges AS e
-      WHERE (e.user_message LIKE ? OR e.assistant_message LIKE ?)
+      FROM exchanges_fts AS f
+      JOIN exchanges AS e ON e.rowid = f.rowid
+      WHERE exchanges_fts MATCH ?
         AND e.is_sidechain = 0
         ${filterClause}
-      ORDER BY e.timestamp DESC
+      ORDER BY bm25(exchanges_fts, 2.0, 1.0)
       LIMIT ?
-    `);
-
-    const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, retrieveLimit);
+    `).all(match, ...filterParams, retrieveLimit);
 
     if (mode === 'both') {
       // Fuse the vector and text rankings (vector first = higher authority on
       // ties) instead of just appending text matches after every vector hit.
-      // Fusion picks the candidates; the final order is by real similarity.
       const lists = [results as Array<{ id: string }>, textResults as Array<{ id: string }>];
       results = reciprocalRankFusion(lists, retrieveLimit);
       // Text-only hits were selected with a placeholder distance; give them
@@ -296,11 +315,9 @@ export async function searchConversations(
     } as SearchResult & { summary?: string; textOnly?: boolean };
   });
 
-  // Show and order by the same number: highest similarity first. Rows with
-  // no vector (none stored) go last. Stable, so ties keep fusion order.
-  if (mode === 'both') {
-    mapped.sort((a, b) => (b.similarity ?? -Infinity) - (a.similarity ?? -Infinity));
-  }
+  // Hybrid results keep the fused (RRF) order: an exchange both channels
+  // agree on outranks one only the vector liked. The shown similarity stays
+  // the real cosine, so it is not monotonic down the list.
 
   // Drop weak vector matches below the threshold. Text-only matches are kept
   // whatever their similarity — a substring hit is an exact signal.
