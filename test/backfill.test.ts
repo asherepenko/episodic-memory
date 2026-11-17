@@ -122,6 +122,21 @@ describe('backfillArchive', () => {
     }
   }, testTimeoutMs(120000));
 
+  it('never follows a symlinked directory out of the archive', async () => {
+    const live = join(testDir, 'live-projects', 'proj');
+    mkdirSync(live, { recursive: true });
+    const liveFile = join(live, 'live.jsonl');
+    writeFileSync(liveFile, conversation('live question'));
+    const before = readFileSync(liveFile);
+    symlinkSync(live, join(archiveDir, 'alpha', 'linked-dir'));
+    symlinkSync(live, join(archiveDir, 'linked-project'));
+
+    const db = initDatabase();
+    const report = await backfillArchive({ archiveDir, dryRun: false, db, acquireLock: free }).finally(() => db.close());
+    expect(report.touched.some(f => f.includes('linked'))).toBe(false);
+    expect(readFileSync(liveFile).equals(before)).toBe(true);
+  }, testTimeoutMs(60000));
+
   it('refuses a real run while the sync lock is held, writing nothing', async () => {
     const file = join(archiveDir, 'alpha', 'c.jsonl');
     const before = readFileSync(file);

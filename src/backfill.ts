@@ -33,13 +33,17 @@ function listFiles(archiveDir: string, project?: string): string[] {
   if (project !== undefined && !projects.includes(project)) {
     throw new Error(`no archived project named "${project}" in ${archiveDir}`);
   }
+  // Resolve every file and keep only those that really live in the archive:
+  // findJsonlFiles follows symlinked directories, which may point at live
+  // transcript folders that backfill must never rewrite.
+  const root = fs.realpathSync(archiveDir) + path.sep;
   const out: string[] = [];
   for (const name of project !== undefined ? [project] : projects) {
     const dir = path.join(archiveDir, name);
     for (const rel of findJsonlFiles(dir)) {
       const file = path.join(dir, rel);
-      // A symlinked file belongs to someone else (often a live directory): never rewrite through it.
-      if (!fs.lstatSync(file).isSymbolicLink()) out.push(file);
+      if (fs.lstatSync(file).isSymbolicLink()) continue;
+      if (fs.realpathSync(file).startsWith(root)) out.push(file);
     }
   }
   return out;
