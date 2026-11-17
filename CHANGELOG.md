@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.11.0] - 2026-11-17
 
 ### Changed
 - **The archive keeps only useful data.** `sync` and `index` now archive a distilled copy of each conversation. Attachments, queue operations, API request dumps and progress records are dropped; images become `[image omitted]`; tool results and large tool inputs are cut to 2 KB with the original size noted. Conversation text and thinking are kept whole, record types it does not know pass through, and distilling twice changes nothing. Tool calls and their results still pair up in `show`. On the repo's test fixtures this halves the archive (2.8 MB → 1.4 MB).
