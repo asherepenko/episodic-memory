@@ -90,6 +90,10 @@ const SearchInputSchema = z
       .boolean()
       .optional()
       .describe('Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a reranker model on first use). Defaults to the EPISODIC_MEMORY_RERANK env switch.'),
+    all_exchanges: z
+      .boolean()
+      .optional()
+      .describe('Return every matching exchange instead of one per conversation (default: false). Single-concept searches only.'),
     response_format: ResponseFormatEnum.default('markdown').describe(
       'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
     ),
@@ -170,6 +174,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             git_branch: { type: 'string', minLength: 1, description: 'Filter by git branch name (exact match)' },
             min_score: { type: 'number', minimum: 0, maximum: 1, description: 'Drop semantic matches below this cosine similarity (0-1); text-only matches are kept' },
             rerank: { type: 'boolean', description: 'Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a model on first use)' },
+            all_exchanges: { type: 'boolean', description: 'Return every matching exchange instead of one per conversation (default: false)' },
             response_format: { type: 'string', enum: ['markdown', 'json'], default: 'markdown' },
           },
           required: ['query'],
@@ -262,6 +267,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           git_branch: params.git_branch,
           minScore: params.min_score,
           rerank: params.rerank,
+          collapse: !params.all_exchanges,
         };
 
         const results = await searchConversations(params.query, options);

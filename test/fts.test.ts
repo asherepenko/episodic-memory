@@ -119,7 +119,46 @@ describe('text search uses the lexical index', () => {
     insertExchange(db, exchange('x3', 'garden tomatoes', 'ok', '/a/s3.jsonl'), embedding);
     db.close();
 
-    const results = await searchConversations('rotate signing keys', { mode: 'text', limit: 5 });
+    const results = await searchConversations('rotate signing keys', { mode: 'text', limit: 5, collapse: false });
     expect(results.map(r => r.exchange.id)).toEqual(['x1', 'x2']);
+  });
+});
+
+describe('per-session collapse', () => {
+  let dir: string;
+  let restore: () => void;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'em-collapse-'));
+    process.env.TEST_DB_PATH = path.join(dir, 'test.db');
+    restore = suppressConsole();
+  });
+
+  afterEach(() => {
+    restore();
+    delete process.env.TEST_DB_PATH;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function seed(): void {
+    const db = initDatabase();
+    insertExchange(db, exchange('a1', 'rotate signing keys now', 'ok'), embedding);
+    insertExchange(db, exchange('a2', 'rotate signing keys again', 'ok'), embedding);
+    insertExchange(db, { ...exchange('b1', 'signing keys elsewhere', 'ok', '/a/s2.jsonl'), sessionId: 's2' }, embedding);
+    db.close();
+  }
+
+  it('returns one hit per conversation by default, the best ranked one', async () => {
+    seed();
+    const { searchConversations } = await import('../src/search.js');
+    const results = await searchConversations('rotate signing keys', { mode: 'text', limit: 5 });
+    expect(results.map(r => r.exchange.sessionId)).toEqual(['s1', 's2']);
+  });
+
+  it('keeps every exchange when collapse is off', async () => {
+    seed();
+    const { searchConversations } = await import('../src/search.js');
+    const results = await searchConversations('rotate signing keys', { mode: 'text', limit: 5, collapse: false });
+    expect(results).toHaveLength(3);
   });
 });

@@ -18,7 +18,12 @@ export interface SearchOptions {
   minScore?: number;
   /** rerank a larger candidate pool with a cross-encoder; undefined → EPISODIC_MEMORY_RERANK env */
   rerank?: boolean;
+  /** one result per conversation (its best-ranked exchange); default true */
+  collapse?: boolean;
 }
+
+/** Candidates retrieved per result slot when collapsing, so `limit` sessions survive. */
+const COLLAPSE_FANOUT = 3;
 
 /** Candidate pool size when reranking: retrieve more, rerank, keep top `limit`. */
 const RERANK_POOL = 50;
@@ -190,6 +195,17 @@ export function buildLexicalQuery(query: string): string | null {
   return unique.length ? unique.map(t => `"${t}"`).join(' OR ') : null;
 }
 
+/** Keep the first (best-ranked) result of each conversation, in order. */
+export function collapseBySession<T extends { exchange: ConversationExchange }>(results: T[]): T[] {
+  const seen = new Set<string>();
+  return results.filter(r => {
+    const key = r.exchange.sessionId ?? r.exchange.archivePath;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Logistic squash of a cross-encoder logit into 0-1. */
 function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
@@ -202,7 +218,10 @@ export async function searchConversations(
   const { limit = 10, mode = 'both', after, before } = options;
   const rerankOn = isRerankEnabled(options.rerank);
   // When reranking, retrieve a larger pool to rerank, then keep the top `limit`.
-  const retrieveLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
+  const collapse = options.collapse ?? true;
+  const baseLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
+  // The rerank pool is already wide; widening it again would slow the cross-encoder.
+  const retrieveLimit = collapse && !rerankOn ? baseLimit * COLLAPSE_FANOUT : baseLimit;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
@@ -337,6 +356,8 @@ export async function searchConversations(
       .sort((a, b) => b.score - a.score)
       .map(x => ({ ...x.r, similarity: Number.isFinite(x.score) ? sigmoid(x.score) : 0 }));
   }
+
+  if (collapse) out = collapseBySession(out);
 
   return out.slice(0, limit).map(({ textOnly: _textOnly, ...r }: any) => r as SearchResult);
 }
