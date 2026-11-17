@@ -196,7 +196,7 @@ export function buildLexicalQuery(query: string): string | null {
 }
 
 /** A result with a known similarity must reach `minScore`; one without (text mode) passes. */
-export function passesMinScore(r: { similarity?: number; textOnly?: boolean }, minScore: number): boolean {
+export function passesMinScore(r: { similarity?: number }, minScore: number): boolean {
   return r.similarity === undefined || r.similarity >= minScore;
 }
 

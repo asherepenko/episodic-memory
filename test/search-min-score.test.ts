@@ -88,9 +88,9 @@ describe('search --min-score / minScore', () => {
     // A BM25 hit can share one common word with the query, so it is no longer
     // an exact signal like the old substring match was.
     const { passesMinScore } = await import('../src/search.js');
-    expect(passesMinScore({ similarity: 0.3, textOnly: true }, 0.5)).toBe(false);
-    expect(passesMinScore({ similarity: 0.6, textOnly: true }, 0.5)).toBe(true);
-    expect(passesMinScore({ similarity: undefined, textOnly: false }, 0.5)).toBe(true);
+    expect(passesMinScore({ similarity: 0.3 }, 0.5)).toBe(false);
+    expect(passesMinScore({ similarity: 0.6 }, 0.5)).toBe(true);
+    expect(passesMinScore({ similarity: undefined }, 0.5)).toBe(true);
   });
 
   it('keeps text-mode matches regardless of threshold (no similarity to compare)', async () => {

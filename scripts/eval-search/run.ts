@@ -11,6 +11,7 @@
  * opening a database runs schema migrations.
  */
 import fs from 'fs';
+import { pathToFileURL } from 'url';
 import { searchConversations, SearchOptions } from '../../src/search.js';
 import { rankOfGold, summarize, splitOf, Summary } from './metrics.js';
 
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop()!)) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   main().catch(err => {
     console.error(err);
     process.exit(1);
