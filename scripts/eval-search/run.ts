@@ -78,7 +78,7 @@ export function compare(rows: RankRow[], base: RankRow[]): string {
       if (d > 0) wins++;
       else if (d < 0) losses++;
     }
-    out.push(`${split}: ${wins} better, ${losses} worse vs baseline`);
+    out.push(`${split}: ${wins} better, ${losses} worse vs the --compare run`);
   }
   return out.join('\n');
 }

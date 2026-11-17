@@ -14,7 +14,7 @@ export interface SearchOptions {
   project?: string;     // exact match against e.project
   session_id?: string;  // exact match against e.session_id
   git_branch?: string;  // exact match against e.git_branch
-  /** drop vector matches below this cosine similarity (0-1); text-only matches are kept */
+  /** drop matches below this cosine similarity (0-1); text mode has none, so it is unaffected */
   minScore?: number;
   /** rerank a larger candidate pool with a cross-encoder; undefined → EPISODIC_MEMORY_RERANK env */
   rerank?: boolean;
@@ -195,6 +195,11 @@ export function buildLexicalQuery(query: string): string | null {
   return unique.length ? unique.map(t => `"${t}"`).join(' OR ') : null;
 }
 
+/** A result with a known similarity must reach `minScore`; one without (text mode) passes. */
+export function passesMinScore(r: { similarity?: number; textOnly?: boolean }, minScore: number): boolean {
+  return r.similarity === undefined || r.similarity >= minScore;
+}
+
 /** Keep the first (best-ranked) result of each conversation, in order. */
 export function collapseBySession<T extends { exchange: ConversationExchange }>(results: T[]): T[] {
   const seen = new Set<string>();
@@ -338,11 +343,11 @@ export async function searchConversations(
   // agree on outranks one only the vector liked. The shown similarity stays
   // the real cosine, so it is not monotonic down the list.
 
-  // Drop weak vector matches below the threshold. Text-only matches are kept
-  // whatever their similarity — a substring hit is an exact signal.
+  // Drop weak matches below the threshold. Keyword-only hybrid hits carry a
+  // back-filled cosine and are held to the same bar; text mode has no score.
   let out = mapped;
   if (options.minScore !== undefined) {
-    out = out.filter(r => r.textOnly || r.similarity === undefined || r.similarity >= options.minScore!);
+    out = out.filter(r => passesMinScore(r, options.minScore!));
   }
 
   // Optional cross-encoder rerank over the larger retrieved pool, then keep the

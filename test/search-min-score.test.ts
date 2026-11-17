@@ -84,7 +84,16 @@ describe('search --min-score / minScore', () => {
     expect(filtered.length).toBe(0);
   });
 
-  it('keeps text-only matches regardless of threshold (no similarity to compare)', async () => {
+  it('holds keyword-only hybrid hits to the threshold via their back-filled cosine', async () => {
+    // A BM25 hit can share one common word with the query, so it is no longer
+    // an exact signal like the old substring match was.
+    const { passesMinScore } = await import('../src/search.js');
+    expect(passesMinScore({ similarity: 0.3, textOnly: true }, 0.5)).toBe(false);
+    expect(passesMinScore({ similarity: 0.6, textOnly: true }, 0.5)).toBe(true);
+    expect(passesMinScore({ similarity: undefined, textOnly: false }, 0.5)).toBe(true);
+  });
+
+  it('keeps text-mode matches regardless of threshold (no similarity to compare)', async () => {
     const text = await searchConversations('authentication', { mode: 'text', limit: 10 });
     const textFiltered = await searchConversations('authentication', { mode: 'text', limit: 10, minScore: 0.99 });
     expect(textFiltered.length).toBe(text.length);

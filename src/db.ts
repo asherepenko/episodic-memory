@@ -248,6 +248,9 @@ export function ensureLexicalIndex(db: Database.Database): void {
   const exists = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exchanges_fts'"
   ).get();
+  // One transaction: a first open killed mid-build must not leave an empty
+  // table that the exists check would then never rebuild.
+  db.transaction(() => {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
       user_message, assistant_message,
@@ -273,6 +276,7 @@ export function ensureLexicalIndex(db: Database.Database): void {
     console.log('Building lexical search index...');
     db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`);
   }
+  })();
 }
 
 /**

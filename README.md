@@ -163,7 +163,7 @@ episodic-memory index --cleanup
 
 # Search conversations
 episodic-memory search "React Router authentication"
-episodic-memory search --text "exact phrase"
+episodic-memory search --text "a1b2c3d4 parseManifest"   # keywords only
 episodic-memory search --after 2025-09-01 "refactoring"
 episodic-memory search --project my-app "auth flow"
 episodic-memory search --git-branch feature/login "validation"
@@ -378,7 +378,7 @@ Common operations:
 
 ### `episodic-memory search`
 
-Search indexed conversations using semantic similarity or exact text matching. See `episodic-memory search --help` for full options.
+Search indexed conversations using semantic similarity and keyword (BM25) ranking. See `episodic-memory search --help` for full options.
 
 ### `episodic-memory show`
 
@@ -442,7 +442,7 @@ When installed as a Claude Code or Codex plugin, episodic-memory provides an MCP
 
 #### `search`
 
-Search indexed conversations using semantic similarity or exact text matching.
+Search indexed conversations using semantic similarity and keyword (BM25) ranking.
 
 **Single-concept search**: Pass a string query
 ```json

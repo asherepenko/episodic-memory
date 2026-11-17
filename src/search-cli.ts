@@ -25,12 +25,12 @@ for (let i = 0; i < args.length; i++) {
     console.log(`
 Usage: episodic-memory search [OPTIONS] <query>
 
-Search indexed conversations using semantic similarity or exact text matching.
+Search indexed conversations using semantic similarity, keyword (BM25) ranking, or both.
 
 MODES:
   (default)      Combined vector + text search
   --vector       Vector similarity only (semantic)
-  --text         Exact string matching only (for git SHAs, error codes)
+  --text         Keyword (BM25) matching only (git SHAs, error codes, identifiers)
 
 OPTIONS:
   --after DATE          Only conversations after YYYY-MM-DD
