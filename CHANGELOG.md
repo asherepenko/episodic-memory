@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-11-17
+
+### Changed
+- **Better search ranking.** Keyword search uses an SQLite FTS5 index with BM25 scoring instead of `LIKE`, so it matches whole words. Results are ordered by the fused score of keyword and vector rank, and each session appears once. On a held-out question set, recall@10 rose from 81.0% to 88.9% and MRR from .632 to .688; identifier lookups gained most.
+- **First open builds the keyword index once.** On a large index this takes about a minute and grows the database by roughly 20%.
+
+### Added
+- **Search eval harness** in `scripts/eval-search/` with a small synthetic fixture.
+
 ## [1.11.0] - 2026-11-17
 
 ### Changed
