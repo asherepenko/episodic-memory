@@ -163,11 +163,12 @@ episodic-memory index --cleanup
 
 # Search conversations
 episodic-memory search "React Router authentication"
-episodic-memory search --text "exact phrase"
+episodic-memory search --text "a1b2c3d4 parseManifest"   # keywords only
 episodic-memory search --after 2025-09-01 "refactoring"
 episodic-memory search --project my-app "auth flow"
 episodic-memory search --git-branch feature/login "validation"
 episodic-memory search --min-score 0.7 "auth flow"   # drop weak semantic matches
+episodic-memory search --all-exchanges "auth flow"   # every matching exchange, not one per conversation
 
 # Multi-concept AND search (positional args)
 episodic-memory search "React Router" "authentication" "JWT"
@@ -377,7 +378,7 @@ Common operations:
 
 ### `episodic-memory search`
 
-Search indexed conversations using semantic similarity or exact text matching. See `episodic-memory search --help` for full options.
+Search indexed conversations using semantic similarity and keyword (BM25) ranking. See `episodic-memory search --help` for full options.
 
 ### `episodic-memory show`
 
@@ -411,7 +412,7 @@ open output.html
 2. **Parse** - Extracts user-agent exchanges from Claude Code JSONL or Codex rollout JSONL
 3. **Embed** - Generates vector embeddings using Transformers.js (local, offline)
 4. **Index** - Stores in SQLite with sqlite-vec for fast similarity search
-5. **Search** - Semantic search using vector similarity or exact text matching
+5. **Search** - Hybrid search: vector similarity and BM25 keyword ranking (SQLite FTS5), fused with reciprocal rank fusion; one result per conversation by default
 
 ## Excluding Conversations
 
@@ -441,7 +442,7 @@ When installed as a Claude Code or Codex plugin, episodic-memory provides an MCP
 
 #### `search`
 
-Search indexed conversations using semantic similarity or exact text matching.
+Search indexed conversations using semantic similarity and keyword (BM25) ranking.
 
 **Single-concept search**: Pass a string query
 ```json
@@ -468,6 +469,7 @@ Search indexed conversations using semantic similarity or exact text matching.
 - `before` (string, optional): Only show conversations before YYYY-MM-DD
 - `project` (string, optional): Filter by project name (exact match)
 - `session_id` (string, optional): Filter by session ID (exact match)
+- `all_exchanges` (boolean, optional): Return every matching exchange instead of one per conversation (default: false)
 - `git_branch` (string, optional): Filter by git branch name (exact match)
 - `response_format` ('markdown' | 'json'): Output format (default: 'markdown')
 
@@ -515,6 +517,18 @@ On a fresh clone, the first `npm test` downloads the embedding and reranker mode
 ```bash
 EPISODIC_MEMORY_TEST_TIMEOUT_MS=180000 npm test
 ```
+
+### Retrieval eval
+
+`scripts/eval-search/run.ts` measures search quality: R@5, R@10 and MRR of the gold conversation, per dev / held-out split (fixed by question id) and per question kind. Questions are JSONL lines `{"qid","kind","query","gold_session"}`. Keep a question set built from a real archive in `.eval/` (gitignored); `scripts/eval-search/fixture/` holds a small synthetic set used by the tests. Run it against a copy of the index, never the live one, because opening a database runs migrations:
+
+```bash
+EPISODIC_MEMORY_DB_PATH=/path/to/copy/db.sqlite npx tsx scripts/eval-search/run.ts \
+  --questions .eval/questions.local.jsonl --label after --options '{"rerank":false}' \
+  --ranks-out .eval/after.jsonl --compare .eval/before.jsonl
+```
+
+Tune on dev; read held-out once per change.
 
 ## License
 

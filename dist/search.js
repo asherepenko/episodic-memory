@@ -3,6 +3,8 @@ import { initEmbeddings, generateQueryEmbedding, EMBEDDER } from './embeddings.j
 import { rerankScores, isRerankEnabled } from './reranker.js';
 import fs from 'fs';
 import readline from 'readline';
+/** Candidates retrieved per result slot when collapsing, so `limit` sessions survive. */
+const COLLAPSE_FANOUT = 3;
 /** Candidate pool size when reranking: retrieve more, rerank, keep top `limit`. */
 const RERANK_POOL = 50;
 /**
@@ -137,6 +139,39 @@ export function reciprocalRankFusionScored(lists, limit, k = 60) {
         .slice(0, limit)
         .map(([id, score]) => ({ row: rowById.get(id), score }));
 }
+const STOP_WORDS = new Set([
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'can', 'did', 'do', 'does', 'for', 'from',
+    'had', 'has', 'have', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'me', 'my', 'of', 'on',
+    'or', 'our', 'so', 'that', 'the', 'their', 'then', 'there', 'this', 'to', 'was', 'we', 'were',
+    'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'you', 'your',
+]);
+/**
+ * Turn a free-text query into an FTS5 MATCH expression: word tokens (letters,
+ * digits, `_`), lower-cased, stop words dropped, each quoted so FTS syntax in
+ * the query is inert, OR-joined so BM25 ranks partial matches. null when
+ * nothing searchable is left.
+ */
+export function buildLexicalQuery(query) {
+    const tokens = (query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
+        .filter(t => t.length > 1 && !STOP_WORDS.has(t));
+    const unique = [...new Set(tokens)];
+    return unique.length ? unique.map(t => `"${t}"`).join(' OR ') : null;
+}
+/** A result with a known similarity must reach `minScore`; one without (text mode) passes. */
+export function passesMinScore(r, minScore) {
+    return r.similarity === undefined || r.similarity >= minScore;
+}
+/** Keep the first (best-ranked) result of each conversation, in order. */
+export function collapseBySession(results) {
+    const seen = new Set();
+    return results.filter(r => {
+        const key = r.exchange.sessionId ?? r.exchange.archivePath;
+        if (seen.has(key))
+            return false;
+        seen.add(key);
+        return true;
+    });
+}
 /** Logistic squash of a cross-encoder logit into 0-1. */
 function sigmoid(x) {
     return 1 / (1 + Math.exp(-x));
@@ -145,7 +180,10 @@ export async function searchConversations(query, options = {}) {
     const { limit = 10, mode = 'both', after, before } = options;
     const rerankOn = isRerankEnabled(options.rerank);
     // When reranking, retrieve a larger pool to rerank, then keep the top `limit`.
-    const retrieveLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
+    const collapse = options.collapse ?? true;
+    const baseLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
+    // The rerank pool is already wide; widening it again would slow the cross-encoder.
+    const retrieveLimit = collapse && !rerankOn ? baseLimit * COLLAPSE_FANOUT : baseLimit;
     // Validate date parameters
     if (after)
         validateISODate(after, '--after');
@@ -183,23 +221,23 @@ export async function searchConversations(query, options = {}) {
         }
     }
     if (mode === 'text' || mode === 'both') {
-        // Text search
-        const textStmt = db.prepare(`
+        // Lexical search: BM25 over the FTS5 index, user side weighted double.
+        const match = buildLexicalQuery(query);
+        const textResults = match === null ? [] : db.prepare(`
       SELECT
         ${EXCHANGE_SELECT_COLUMNS},
         0 as distance
-      FROM exchanges AS e
-      WHERE (e.user_message LIKE ? OR e.assistant_message LIKE ?)
+      FROM exchanges_fts AS f
+      JOIN exchanges AS e ON e.rowid = f.rowid
+      WHERE exchanges_fts MATCH ?
         AND e.is_sidechain = 0
         ${filterClause}
-      ORDER BY e.timestamp DESC
+      ORDER BY bm25(exchanges_fts, 2.0, 1.0)
       LIMIT ?
-    `);
-        const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, retrieveLimit);
+    `).all(match, ...filterParams, retrieveLimit);
         if (mode === 'both') {
             // Fuse the vector and text rankings (vector first = higher authority on
             // ties) instead of just appending text matches after every vector hit.
-            // Fusion picks the candidates; the final order is by real similarity.
             const lists = [results, textResults];
             results = reciprocalRankFusion(lists, retrieveLimit);
             // Text-only hits were selected with a placeholder distance; give them
@@ -242,16 +280,14 @@ export async function searchConversations(query, options = {}) {
             summary
         };
     });
-    // Show and order by the same number: highest similarity first. Rows with
-    // no vector (none stored) go last. Stable, so ties keep fusion order.
-    if (mode === 'both') {
-        mapped.sort((a, b) => (b.similarity ?? -Infinity) - (a.similarity ?? -Infinity));
-    }
-    // Drop weak vector matches below the threshold. Text-only matches are kept
-    // whatever their similarity — a substring hit is an exact signal.
+    // Hybrid results keep the fused (RRF) order: an exchange both channels
+    // agree on outranks one only the vector liked. The shown similarity stays
+    // the real cosine, so it is not monotonic down the list.
+    // Drop weak matches below the threshold. Keyword-only hybrid hits carry a
+    // back-filled cosine and are held to the same bar; text mode has no score.
     let out = mapped;
     if (options.minScore !== undefined) {
-        out = out.filter(r => r.textOnly || r.similarity === undefined || r.similarity >= options.minScore);
+        out = out.filter(r => passesMinScore(r, options.minScore));
     }
     // Optional cross-encoder rerank over the larger retrieved pool, then keep the
     // top `limit`. Reorders by joint query/passage relevance; the displayed
@@ -264,6 +300,8 @@ export async function searchConversations(query, options = {}) {
             .sort((a, b) => b.score - a.score)
             .map(x => ({ ...x.r, similarity: Number.isFinite(x.score) ? sigmoid(x.score) : 0 }));
     }
+    if (collapse)
+        out = collapseBySession(out);
     return out.slice(0, limit).map(({ textOnly: _textOnly, ...r }) => r);
 }
 // Helper function to count lines in a file efficiently

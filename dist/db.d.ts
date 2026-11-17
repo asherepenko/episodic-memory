@@ -23,6 +23,15 @@ export declare function migrateSchema(db: Database.Database): void;
 export declare function migrateToolCallsCascade(db: Database.Database): void;
 export declare function initDatabase(): Database.Database;
 /**
+ * BM25 lexical index over both sides of every exchange. External content:
+ * the text lives once, in `exchanges`; triggers keep the token index in step.
+ * `_` is a token character so snake_case identifiers stay whole.
+ * A database created before the index existed gets it built on first open.
+ * Keyed on the implicit rowid: after a VACUUM, run
+ * `INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`.
+ */
+export declare function ensureLexicalIndex(db: Database.Database): void;
+/**
  * One row per archived transcript that indexing has finished with, including
  * files that produced zero exchanges (exclusion markers, metadata-only). Sync
  * indexes any archived file with no row, or whose mtime is newer than its row.

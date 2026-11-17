@@ -15,6 +15,7 @@ let gitBranch: string | undefined;
 let limit = 10;
 let minScore: number | undefined;
 let rerank: boolean | undefined;
+let allExchanges = false;
 const queries: string[] = [];
 
 for (let i = 0; i < args.length; i++) {
@@ -24,12 +25,12 @@ for (let i = 0; i < args.length; i++) {
     console.log(`
 Usage: episodic-memory search [OPTIONS] <query>
 
-Search indexed conversations using semantic similarity or exact text matching.
+Search indexed conversations using semantic similarity, keyword (BM25) ranking, or both.
 
 MODES:
   (default)      Combined vector + text search
   --vector       Vector similarity only (semantic)
-  --text         Exact string matching only (for git SHAs, error codes)
+  --text         Keyword (BM25) matching only (git SHAs, error codes, identifiers)
 
 OPTIONS:
   --after DATE          Only conversations after YYYY-MM-DD
@@ -40,6 +41,7 @@ OPTIONS:
   --limit N             Max results (default: 10)
   --min-score N         Drop semantic matches below cosine similarity N (0-1)
   --rerank              Rerank results with a cross-encoder for higher precision
+  --all-exchanges       Show every matching exchange, not one per conversation
   --help, -h            Show this help
 
 EXAMPLES:
@@ -86,6 +88,8 @@ EXAMPLES:
     if (Number.isFinite(v) && v >= 0 && v <= 1) minScore = v;
   } else if (arg === '--rerank') {
     rerank = true;
+  } else if (arg === '--all-exchanges') {
+    allExchanges = true;
   } else {
     // All non-flag args are query terms
     queries.push(arg);
@@ -165,6 +169,7 @@ if (queries.length > 1) {
     git_branch: gitBranch,
     minScore,
     rerank,
+    collapse: !allExchanges,
   };
 
   const run = useUi

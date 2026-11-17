@@ -46,7 +46,7 @@ const SearchInputSchema = z
         'Search query - string for single concept, array of strings for multi-concept AND search'
       ),
     mode: SearchModeEnum.default('both').describe(
-      'Search mode: "vector" for semantic similarity, "text" for exact matching, "both" for combined (default: "both"). Only used for single-concept searches.'
+      'Search mode: "vector" for semantic similarity, "text" for keyword (BM25) matching, "both" for combined (default: "both"). Only used for single-concept searches.'
     ),
     limit: z
       .number()
@@ -85,11 +85,15 @@ const SearchInputSchema = z
       .min(0)
       .max(1)
       .optional()
-      .describe('Drop semantic matches below this cosine similarity (0-1). Raises precision; text-only matches are always kept.'),
+      .describe('Drop semantic matches below this cosine similarity (0-1). Raises precision; ignored in text mode, which has no similarity.'),
     rerank: z
       .boolean()
       .optional()
       .describe('Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a reranker model on first use). Defaults to the EPISODIC_MEMORY_RERANK env switch.'),
+    all_exchanges: z
+      .boolean()
+      .optional()
+      .describe('Return every matching exchange instead of one per conversation (default: false). Single-concept searches only.'),
     response_format: ResponseFormatEnum.default('markdown').describe(
       'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
     ),
@@ -168,8 +172,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             project: { type: 'string', minLength: 1, description: 'Filter by project name (exact match)' },
             session_id: { type: 'string', minLength: 1, description: 'Filter by session ID (exact match)' },
             git_branch: { type: 'string', minLength: 1, description: 'Filter by git branch name (exact match)' },
-            min_score: { type: 'number', minimum: 0, maximum: 1, description: 'Drop semantic matches below this cosine similarity (0-1); text-only matches are kept' },
+            min_score: { type: 'number', minimum: 0, maximum: 1, description: 'Drop semantic matches below this cosine similarity (0-1); ignored in text mode' },
             rerank: { type: 'boolean', description: 'Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a model on first use)' },
+            all_exchanges: { type: 'boolean', description: 'Return every matching exchange instead of one per conversation (default: false)' },
             response_format: { type: 'string', enum: ['markdown', 'json'], default: 'markdown' },
           },
           required: ['query'],
@@ -262,6 +267,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           git_branch: params.git_branch,
           minScore: params.min_score,
           rerank: params.rerank,
+          collapse: !params.all_exchanges,
         };
 
         const results = await searchConversations(params.query, options);

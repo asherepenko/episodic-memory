@@ -1,0 +1,8 @@
+[
+  { "session": "fx-bread", "user": "How do I keep a sourdough starter alive so my loaves rise?", "assistant": "Feed the starter daily with flour and water and keep it warm." },
+  { "session": "fx-puppy", "user": "Our new puppy will not sit on command, any tips?", "assistant": "Use short sessions, treats and consistent words for sit and stay." },
+  { "session": "fx-garden", "user": "Which tomatoes and peppers grow well in a small garden bed?", "assistant": "Cherry tomatoes and compact peppers do well in raised beds." },
+  { "session": "fx-retry", "user": "The uploader gives up too early. Where is retry_budget configured?", "assistant": "Raise retry_budget in uploader.config.json; it caps total retries." },
+  { "session": "fx-manifest", "user": "parseManifest crashes when the manifest file is empty", "assistant": "Guard the empty case in parseManifest before JSON.parse." },
+  { "session": "fx-hike", "user": "Plan a three day trek in the alps with huts", "assistant": "Book huts early and keep each day under 1200 m of ascent." }
+]

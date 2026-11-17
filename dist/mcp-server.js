@@ -7426,7 +7426,40 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_archive_path ON exchanges(archive_path)
   `);
   ensureIndexedFilesTable(db);
+  ensureLexicalIndex(db);
   return db;
+}
+function ensureLexicalIndex(db) {
+  const exists = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exchanges_fts'"
+  ).get();
+  db.transaction(() => {
+    db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
+      user_message, assistant_message,
+      content='exchanges', content_rowid='rowid',
+      tokenize="unicode61 remove_diacritics 2 tokenchars '_'"
+    );
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ai AFTER INSERT ON exchanges BEGIN
+      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
+      VALUES (new.rowid, new.user_message, new.assistant_message);
+    END;
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ad AFTER DELETE ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES ('delete', old.rowid, old.user_message, old.assistant_message);
+    END;
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_au AFTER UPDATE OF user_message, assistant_message ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES ('delete', old.rowid, old.user_message, old.assistant_message);
+      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
+      VALUES (new.rowid, new.user_message, new.assistant_message);
+    END;
+  `);
+    if (!exists) {
+      console.log("Building lexical search index...");
+      db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`);
+    }
+  })();
 }
 function ensureIndexedFilesTable(db) {
   const exists = db.prepare(
@@ -26045,6 +26078,7 @@ function isRerankEnabled(flag) {
 // src/search.ts
 import fs6 from "fs";
 import readline from "readline";
+var COLLAPSE_FANOUT = 3;
 var RERANK_POOL = 50;
 function buildSearchFilters(options) {
   const parts = [];
@@ -26148,13 +26182,87 @@ function reciprocalRankFusionScored(lists, limit, k = 60) {
   }
   return [...scores.entries()].sort((a, b2) => b2[1] - a[1]).slice(0, limit).map(([id, score]) => ({ row: rowById.get(id), score }));
 }
+var STOP_WORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "but",
+  "by",
+  "can",
+  "did",
+  "do",
+  "does",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "how",
+  "i",
+  "if",
+  "in",
+  "into",
+  "is",
+  "it",
+  "its",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "our",
+  "so",
+  "that",
+  "the",
+  "their",
+  "then",
+  "there",
+  "this",
+  "to",
+  "was",
+  "we",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+  "will",
+  "with",
+  "you",
+  "your"
+]);
+function buildLexicalQuery(query) {
+  const tokens = (query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []).filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+  const unique = [...new Set(tokens)];
+  return unique.length ? unique.map((t) => `"${t}"`).join(" OR ") : null;
+}
+function passesMinScore(r, minScore) {
+  return r.similarity === void 0 || r.similarity >= minScore;
+}
+function collapseBySession(results) {
+  const seen = /* @__PURE__ */ new Set();
+  return results.filter((r) => {
+    const key = r.exchange.sessionId ?? r.exchange.archivePath;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 function sigmoid(x2) {
   return 1 / (1 + Math.exp(-x2));
 }
 async function searchConversations(query, options = {}) {
   const { limit = 10, mode = "both", after, before } = options;
   const rerankOn = isRerankEnabled(options.rerank);
-  const retrieveLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
+  const collapse = options.collapse ?? true;
+  const baseLimit = rerankOn ? Math.min(Math.max(limit * 5, 25), RERANK_POOL) : limit;
+  const retrieveLimit = collapse && !rerankOn ? baseLimit * COLLAPSE_FANOUT : baseLimit;
   if (after) validateISODate(after, "--after");
   if (before) validateISODate(before, "--before");
   const db = initDatabase();
@@ -26188,18 +26296,19 @@ async function searchConversations(query, options = {}) {
     }
   }
   if (mode === "text" || mode === "both") {
-    const textStmt = db.prepare(`
+    const match = buildLexicalQuery(query);
+    const textResults = match === null ? [] : db.prepare(`
       SELECT
         ${EXCHANGE_SELECT_COLUMNS},
         0 as distance
-      FROM exchanges AS e
-      WHERE (e.user_message LIKE ? OR e.assistant_message LIKE ?)
+      FROM exchanges_fts AS f
+      JOIN exchanges AS e ON e.rowid = f.rowid
+      WHERE exchanges_fts MATCH ?
         AND e.is_sidechain = 0
         ${filterClause}
-      ORDER BY e.timestamp DESC
+      ORDER BY bm25(exchanges_fts, 2.0, 1.0)
       LIMIT ?
-    `);
-    const textResults = textStmt.all(`%${query}%`, `%${query}%`, ...filterParams, retrieveLimit);
+    `).all(match, ...filterParams, retrieveLimit);
     if (mode === "both") {
       const lists = [results, textResults];
       results = reciprocalRankFusion(lists, retrieveLimit);
@@ -26234,12 +26343,9 @@ async function searchConversations(query, options = {}) {
       summary
     };
   });
-  if (mode === "both") {
-    mapped.sort((a, b2) => (b2.similarity ?? -Infinity) - (a.similarity ?? -Infinity));
-  }
   let out = mapped;
   if (options.minScore !== void 0) {
-    out = out.filter((r) => r.textOnly || r.similarity === void 0 || r.similarity >= options.minScore);
+    out = out.filter((r) => passesMinScore(r, options.minScore));
   }
   if (rerankOn && out.length > 1) {
     const passages = out.map((r) => `User: ${r.exchange.userMessage}
@@ -26248,6 +26354,7 @@ Assistant: ${r.exchange.assistantMessage}`);
     const scores = await rerankScores(query, passages);
     out = out.map((r, i) => ({ r, score: scores[i] ?? -Infinity })).sort((a, b2) => b2.score - a.score).map((x2) => ({ ...x2.r, similarity: Number.isFinite(x2.score) ? sigmoid(x2.score) : 0 }));
   }
+  if (collapse) out = collapseBySession(out);
   return out.slice(0, limit).map(({ textOnly: _textOnly, ...r }) => r);
 }
 async function countLines(filePath) {
@@ -28072,7 +28179,7 @@ var SearchInputSchema = external_exports.object({
     "Search query - string for single concept, array of strings for multi-concept AND search"
   ),
   mode: SearchModeEnum.default("both").describe(
-    'Search mode: "vector" for semantic similarity, "text" for exact matching, "both" for combined (default: "both"). Only used for single-concept searches.'
+    'Search mode: "vector" for semantic similarity, "text" for keyword (BM25) matching, "both" for combined (default: "both"). Only used for single-concept searches.'
   ),
   limit: external_exports.number().int().min(1).max(50).default(10).describe("Maximum number of results to return (default: 10)"),
   after: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format").optional().describe("Only return conversations after this date (YYYY-MM-DD format)"),
@@ -28080,8 +28187,9 @@ var SearchInputSchema = external_exports.object({
   project: external_exports.string().min(1).optional().describe("Filter by project name (exact match)"),
   session_id: external_exports.string().min(1).optional().describe("Filter by session ID (exact match)"),
   git_branch: external_exports.string().min(1).optional().describe("Filter by git branch name (exact match)"),
-  min_score: external_exports.number().min(0).max(1).optional().describe("Drop semantic matches below this cosine similarity (0-1). Raises precision; text-only matches are always kept."),
+  min_score: external_exports.number().min(0).max(1).optional().describe("Drop semantic matches below this cosine similarity (0-1). Raises precision; ignored in text mode, which has no similarity."),
   rerank: external_exports.boolean().optional().describe("Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a reranker model on first use). Defaults to the EPISODIC_MEMORY_RERANK env switch."),
+  all_exchanges: external_exports.boolean().optional().describe("Return every matching exchange instead of one per conversation (default: false). Single-concept searches only."),
   response_format: ResponseFormatEnum.default("markdown").describe(
     'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
   )
@@ -28130,8 +28238,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             project: { type: "string", minLength: 1, description: "Filter by project name (exact match)" },
             session_id: { type: "string", minLength: 1, description: "Filter by session ID (exact match)" },
             git_branch: { type: "string", minLength: 1, description: "Filter by git branch name (exact match)" },
-            min_score: { type: "number", minimum: 0, maximum: 1, description: "Drop semantic matches below this cosine similarity (0-1); text-only matches are kept" },
+            min_score: { type: "number", minimum: 0, maximum: 1, description: "Drop semantic matches below this cosine similarity (0-1); ignored in text mode" },
             rerank: { type: "boolean", description: "Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a model on first use)" },
+            all_exchanges: { type: "boolean", description: "Return every matching exchange instead of one per conversation (default: false)" },
             response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" }
           },
           required: ["query"],
@@ -28215,7 +28324,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           session_id: params.session_id,
           git_branch: params.git_branch,
           minScore: params.min_score,
-          rerank: params.rerank
+          rerank: params.rerank,
+          collapse: !params.all_exchanges
         };
         const results = await searchConversations(params.query, options);
         const hint = results.length === 0 ? await buildEmptyResultHint() : void 0;

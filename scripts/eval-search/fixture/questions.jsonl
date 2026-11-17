@@ -1,0 +1,6 @@
+{"qid":"f01","kind":"paraphrase","query":"making bread rise with a starter","gold_session":"fx-bread"}
+{"qid":"f02","kind":"paraphrase","query":"teaching a young dog basic commands","gold_session":"fx-puppy"}
+{"qid":"f03","kind":"paraphrase","query":"vegetables in a backyard plot","gold_session":"fx-garden"}
+{"qid":"f04","kind":"identifier","query":"retry_budget setting for the uploader","gold_session":"fx-retry"}
+{"qid":"f05","kind":"identifier","query":"parseManifest throws on empty file","gold_session":"fx-manifest"}
+{"qid":"f06","kind":"paraphrase","query":"mountain walk route planning","gold_session":"fx-hike"}

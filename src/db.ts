@@ -233,8 +233,52 @@ export function initDatabase(): Database.Database {
   `);
 
   ensureIndexedFilesTable(db);
+  ensureLexicalIndex(db);
 
   return db;
+}
+
+/**
+ * BM25 lexical index over both sides of every exchange. External content:
+ * the text lives once, in `exchanges`; triggers keep the token index in step.
+ * `_` is a token character so snake_case identifiers stay whole.
+ * A database created before the index existed gets it built on first open.
+ * Keyed on the implicit rowid: after a VACUUM, run
+ * `INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`.
+ */
+export function ensureLexicalIndex(db: Database.Database): void {
+  const exists = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exchanges_fts'"
+  ).get();
+  // One transaction: a first open killed mid-build must not leave an empty
+  // table that the exists check would then never rebuild.
+  db.transaction(() => {
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
+      user_message, assistant_message,
+      content='exchanges', content_rowid='rowid',
+      tokenize="unicode61 remove_diacritics 2 tokenchars '_'"
+    );
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ai AFTER INSERT ON exchanges BEGIN
+      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
+      VALUES (new.rowid, new.user_message, new.assistant_message);
+    END;
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ad AFTER DELETE ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES ('delete', old.rowid, old.user_message, old.assistant_message);
+    END;
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_au AFTER UPDATE OF user_message, assistant_message ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES ('delete', old.rowid, old.user_message, old.assistant_message);
+      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
+      VALUES (new.rowid, new.user_message, new.assistant_message);
+    END;
+  `);
+  if (!exists) {
+    console.log('Building lexical search index...');
+    db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`);
+  }
+  })();
 }
 
 /**
@@ -290,8 +334,11 @@ export function insertExchange(
 ): void {
   const now = Date.now();
 
+  // Delete then insert rather than INSERT OR REPLACE: REPLACE's implicit
+  // delete does not fire the lexical-index delete trigger.
+  const delStmt = db.prepare(`DELETE FROM exchanges WHERE id = ?`);
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO exchanges
+    INSERT INTO exchanges
     (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end, last_indexed,
      parent_uuid, is_sidechain, harness, session_id, cwd, git_branch, claude_version, agent_version, model, model_provider,
      thinking_level, thinking_disabled, thinking_triggers, embedding_version)
@@ -311,6 +358,7 @@ export function insertExchange(
   // Wrap the exchange row, its vec counterpart, and tool_calls in a single
   // transaction so a crash mid-sequence cannot leave vec_exchanges out of sync.
   const tx = db.transaction(() => {
+    delStmt.run(exchange.id);
     stmt.run(
       exchange.id,
       exchange.project,
