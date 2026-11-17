@@ -216,6 +216,8 @@ export function initDatabase() {
  * the text lives once, in `exchanges`; triggers keep the token index in step.
  * `_` is a token character so snake_case identifiers stay whole.
  * A database created before the index existed gets it built on first open.
+ * Keyed on the implicit rowid: after a VACUUM, run
+ * `INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`.
  */
 export function ensureLexicalIndex(db) {
     const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exchanges_fts'").get();

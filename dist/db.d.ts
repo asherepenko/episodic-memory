@@ -27,6 +27,8 @@ export declare function initDatabase(): Database.Database;
  * the text lives once, in `exchanges`; triggers keep the token index in step.
  * `_` is a token character so snake_case identifiers stay whole.
  * A database created before the index existed gets it built on first open.
+ * Keyed on the implicit rowid: after a VACUUM, run
+ * `INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`.
  */
 export declare function ensureLexicalIndex(db: Database.Database): void;
 /**

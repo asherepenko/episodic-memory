@@ -51,7 +51,6 @@ export declare function buildLexicalQuery(query: string): string | null;
 /** A result with a known similarity must reach `minScore`; one without (text mode) passes. */
 export declare function passesMinScore(r: {
     similarity?: number;
-    textOnly?: boolean;
 }, minScore: number): boolean;
 /** Keep the first (best-ranked) result of each conversation, in order. */
 export declare function collapseBySession<T extends {
