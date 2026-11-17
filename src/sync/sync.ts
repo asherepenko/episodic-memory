@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { SUMMARIZER_CONTEXT_MARKER } from '../constants.js';
+import { copyDistilled } from '../archive-distill.js';
 import { getExcludedProjects, findJsonlFiles, entryIsDirectory } from '../paths.js';
 import { log } from '../logger.js';
 import {
@@ -119,33 +120,12 @@ export function orderNewestFirst<T extends { path: string }>(files: T[], mtime: 
   return [...files].sort((a, b) => time.get(b.path)! - time.get(a.path)!);
 }
 
-function copyIfNewer(src: string, dest: string): boolean {
-  // Ensure destination directory exists
-  const destDir = path.dirname(dest);
-  if (!fs.existsSync(destDir)) {
-    fs.mkdirSync(destDir, { recursive: true });
-  }
-
-  // Check if destination exists and is up-to-date
-  if (fs.existsSync(dest)) {
-    const srcStat = fs.lstatSync(src);
-    const destStat = fs.lstatSync(dest);
-    if (destStat.mtimeMs >= srcStat.mtimeMs) {
-      return false; // Dest is current, skip
-    }
-  }
-
-  // Atomic copy: temp file + rename
-  const tempDest = dest + '.tmp.' + process.pid;
-  fs.copyFileSync(src, tempDest);
-  fs.renameSync(tempDest, dest); // Atomic on same filesystem
-  return true;
-}
-
 interface ArchiveIndexer {
   indexProject(projectDir: string, project: string, onProgress?: (done: number, of: number) => void): Promise<{ indexed: number; exchanges: number; errors: Array<{ file: string; error: string }> }>;
   /** Every conversation with at least one indexed exchange. */
   listConversations(): Promise<string[]>;
+  /** Drop a rewritten file's rows so the next indexProject indexes it from scratch. */
+  purge(file: string): Promise<void>;
   close(): void;
 }
 
@@ -160,14 +140,15 @@ function createArchiveIndexer(excludedDirSet: ReadonlySet<string>): ArchiveIndex
     mtimes: Map<string, number>;
     markFileIndexed: typeof import('../db.js').markFileIndexed;
     insertExchange: typeof import('../db.js').insertExchange;
+    purgeArchivePath: typeof import('../db.js').purgeArchivePath;
   } | undefined;
   let embeddingsReady = false;
 
   async function open() {
     if (state) return state;
-    const { initDatabase, insertExchange, getIndexedFileMtimes, markFileIndexed } = await import('../db.js');
+    const { initDatabase, insertExchange, getIndexedFileMtimes, markFileIndexed, purgeArchivePath } = await import('../db.js');
     const db = initDatabase();
-    state = { db, mtimes: getIndexedFileMtimes(db), markFileIndexed, insertExchange };
+    state = { db, mtimes: getIndexedFileMtimes(db), markFileIndexed, insertExchange, purgeArchivePath };
     return state;
   }
 
@@ -223,6 +204,11 @@ function createArchiveIndexer(excludedDirSet: ReadonlySet<string>): ArchiveIndex
       }
       onProgress?.(pending.length, pending.length);
       return out;
+    },
+    async purge(file) {
+      const { db, mtimes, purgeArchivePath } = await open();
+      purgeArchivePath(db, file);
+      mtimes.delete(file);
     },
     async listConversations() {
       const { db } = await open();
@@ -332,7 +318,10 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
         const destFile = path.join(destDir, project, file);
 
         try {
-          const wasCopied = copyIfNewer(srcFile, destFile);
+          const { copied: wasCopied, shifted } = copyDistilled(srcFile, destFile);
+          // The archive's old lines moved (e.g. a raw copy from before distill):
+          // its indexed exchange ids no longer match, so re-index it whole.
+          if (shifted) await indexer.purge(destFile);
           let state: SyncState;
           if (wasCopied) {
             result.copied++;

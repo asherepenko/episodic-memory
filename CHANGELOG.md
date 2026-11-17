@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The archive keeps only useful data.** `sync` and `index` now archive a distilled copy of each conversation. Attachments, queue operations, API request dumps and progress records are dropped; images become `[image omitted]`; tool results and large tool inputs are cut to 2 KB with the original size noted. Conversation text and thinking are kept whole, record types it does not know pass through, and distilling twice changes nothing. Tool calls and their results still pair up in `show`. On the repo's test fixtures this halves the archive (2.8 MB → 1.4 MB).
+
+### Added
+- **`episodic-memory backfill`** distills conversations archived before this change. Run `--dry-run` first to see the bytes it would save; `--project <name>` limits it to one project. Files are rewritten through a temp file and a rename with their modification time kept, so summaries are not redone, and each rewritten file is indexed again.
+
+### Fixed
+- **A raw archive re-copied with different lines no longer leaves stale search results.** When a re-copy moves an archived conversation's lines, its old index rows are removed and it is indexed again from the start.
+
 ## [1.10.0] - 2026-11-16
 
 ### Fixed

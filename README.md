@@ -250,6 +250,7 @@ Codex summarization requires `codex-cli 0.130.0` or newer. If Codex app-server s
 
 Features:
 - Only copies new or modified files (fast on subsequent runs)
+- Archives a distilled copy: drops attachments, queue operations, API request dumps and progress records, replaces images with a placeholder, and trims tool results and large tool inputs to 2 KB (with the original size noted). Conversation text and thinking are kept whole
 - Generates embeddings for semantic search
 - Atomic operations - safe to run concurrently
 - Idempotent - safe to call repeatedly
@@ -281,6 +282,25 @@ Add to `.claude/hooks/session-end`:
 #!/bin/bash
 episodic-memory sync --background
 ```
+
+### `episodic-memory backfill`
+
+Distills conversations archived before sync started distilling them. Rewrites each file in place (temp file and rename, original modification time kept), removes its index rows and indexes it again, because its line numbers moved.
+
+```bash
+# See how much space it would save; changes nothing
+episodic-memory backfill --dry-run
+
+# Distill one archive project, then everything
+episodic-memory backfill --project -Users-me-src-app
+episodic-memory backfill
+```
+
+- `--dry-run` — report bytes saved, write nothing
+- `--project <name>` — one archive project directory (exact name)
+- `--no-index` — skip re-indexing; the next `sync` picks the files up
+
+A real run refuses while a sync is running.
 
 ### `episodic-memory stats`
 

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { initDatabase, insertExchange } from './db.js';
+import { initDatabase, insertExchange, purgeArchivePath } from './db.js';
+import { copyDistilled } from './archive-distill.js';
 import { parseConversation } from './parser.js';
 import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
@@ -60,17 +61,14 @@ process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '20000';
 // Increase max listeners for concurrent API calls
 import { EventEmitter } from 'events';
 EventEmitter.defaultMaxListeners = 20;
-// Skip re-copying the archive when source size + mtime match. Transcripts are
-// append-only, so any growth bumps both. lstat avoids following worktree symlinks.
-function shouldRefreshArchive(sourcePath, archivePath) {
-    try {
-        const archiveStat = fs.lstatSync(archivePath);
-        const sourceStat = fs.lstatSync(sourcePath);
-        return sourceStat.size !== archiveStat.size || sourceStat.mtimeMs > archiveStat.mtimeMs;
-    }
-    catch {
-        return true;
-    }
+// Archive the conversation distilled (only when the source is newer). When the
+// re-copy moves the archive's existing lines (a raw copy from before distill),
+// its indexed exchange ids no longer match: drop them so it is indexed whole.
+function archiveConversation(db, sourcePath, archivePath) {
+    const { copied, shifted } = copyDistilled(sourcePath, archivePath);
+    if (shifted)
+        purgeArchivePath(db, archivePath);
+    return copied;
 }
 // Process items in batches with limited concurrency
 async function processBatch(items, processor, concurrency) {
@@ -138,13 +136,11 @@ export async function indexConversations(limitToProject, maxConversations, concu
                 const archivePath = path.join(projectArchive, file);
                 // Copy to archive (ensure parent dirs exist for subagent files).
                 // Refresh when the source has changed so show/read serve current content.
-                if (shouldRefreshArchive(sourcePath, archivePath)) {
-                    fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-                    fs.copyFileSync(sourcePath, archivePath);
+                if (archiveConversation(db, sourcePath, archivePath)) {
                     console.log(`  Archived: ${file}`);
                 }
-                // Parse conversation
-                const exchanges = await parseConversation(sourcePath, project, archivePath);
+                // Parse the archived copy: its line numbers are the ones show/read use.
+                const exchanges = await parseConversation(archivePath, project, archivePath);
                 if (exchanges.length === 0) {
                     console.log(`  Skipped ${file} (no exchanges)`);
                     continue;
@@ -266,12 +262,9 @@ async function indexSessionWork(sessionId, noSummaries) {
                 fs.mkdirSync(projectArchive, { recursive: true });
                 const archivePath = path.join(projectArchive, file);
                 // Archive (ensure parent dirs exist for subagent files)
-                if (!fs.existsSync(archivePath)) {
-                    fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-                    fs.copyFileSync(sourcePath, archivePath);
-                }
+                archiveConversation(db, sourcePath, archivePath);
                 // Parse and summarize
-                const exchanges = await parseConversation(sourcePath, project, archivePath);
+                const exchanges = await parseConversation(archivePath, project, archivePath);
                 if (exchanges.length > 0) {
                     // Generate summary (unless --no-summaries). Queue decision and failure
                     // recording both flow through ConversationSyncState.
@@ -351,19 +344,15 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
                 const projectArchive = path.join(ARCHIVE_DIR, project);
                 const archivePath = path.join(projectArchive, file);
                 const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
+                // Refresh the archive when the source is newer. Runs before the high-water
+                // read: a re-copy that moved lines purges the file's rows, resetting it to 0.
+                archiveConversation(db, sourcePath, archivePath);
                 // High-water mark: index exchanges past the last line we've already covered.
-                // Transcript JSONLs are append-only, so MAX(line_end) tells us where to resume.
+                // Archived conversations only grow at the end, so MAX(line_end) tells us where to resume.
                 const hw = db.prepare('SELECT COALESCE(MAX(line_end), 0) as maxLine FROM exchanges WHERE archive_path = ?').get(archivePath);
                 const maxIndexedLine = hw.maxLine;
-                // Ensure parent dirs exist for subagent files
-                fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-                // Refresh the archive when the source has actually changed.
-                // Avoids re-copying multi-megabyte transcripts on every incremental run.
-                if (shouldRefreshArchive(sourcePath, archivePath)) {
-                    fs.copyFileSync(sourcePath, archivePath);
-                }
                 // Parse and filter to exchanges past the high-water mark
-                const exchanges = await parseConversation(sourcePath, project, archivePath);
+                const exchanges = await parseConversation(archivePath, project, archivePath);
                 const newExchanges = maxIndexedLine > 0
                     ? exchanges.filter(e => e.lineStart > maxIndexedLine)
                     : exchanges;

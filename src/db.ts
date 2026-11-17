@@ -227,6 +227,10 @@ export function initDatabase(): Database.Database {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tool_exchange ON tool_calls(exchange_id)
   `);
+  // Per-file lookups: the indexer's high-water mark and purgeArchivePath.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_archive_path ON exchanges(archive_path)
+  `);
 
   ensureIndexedFilesTable(db);
 
@@ -367,6 +371,29 @@ export function getFileLastIndexed(db: Database.Database, archivePath: string): 
   `);
   const row = stmt.get(archivePath) as { lastIndexed: number | null };
   return row.lastIndexed;
+}
+
+/**
+ * Forget everything indexed from one archived conversation, so it is indexed
+ * again from scratch. Needed when the file was rewritten and its line numbers
+ * moved: exchange ids hash the line range, so stale rows would otherwise stay.
+ * Returns the number of exchanges removed.
+ */
+export function purgeArchivePath(db: Database.Database, archivePath: string): number {
+  ensureIndexedFilesTable(db);
+  return db.transaction(() => {
+    const ids = db.prepare('SELECT id FROM exchanges WHERE archive_path = ?').all(archivePath) as Array<{ id: string }>;
+    // Point deletes: the vec0 table and tool_calls are keyed by exchange id.
+    const delVec = db.prepare('DELETE FROM vec_exchanges WHERE id = ?');
+    const delTools = db.prepare('DELETE FROM tool_calls WHERE exchange_id = ?');
+    for (const { id } of ids) {
+      delVec.run(id);
+      delTools.run(id);
+    }
+    const removed = db.prepare('DELETE FROM exchanges WHERE archive_path = ?').run(archivePath).changes;
+    db.prepare('DELETE FROM indexed_files WHERE archive_path = ?').run(archivePath);
+    return removed;
+  })();
 }
 
 export function deleteExchange(db: Database.Database, id: string): void {

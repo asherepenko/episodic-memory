@@ -11,7 +11,7 @@ npm run test:watch    # Watch mode
 ```
 
 **Entry points**
-- `cli/episodic-memory` (extension-less shim) → `dist/cli/episodic-memory.js` (compiled from `src/cli/episodic-memory.ts`); unified CLI (subcommands: sync, search, show, stats, verify)
+- `cli/episodic-memory` (extension-less shim) → `dist/cli/episodic-memory.js` (compiled from `src/cli/episodic-memory.ts`); unified CLI (subcommands: sync, search, show, stats, verify, backfill)
 - `dist/mcp-server.js` — MCP server (bundled ESM); exposes search_conversations, show_conversation tools
 - `cli/mcp-server` (shim) → `dist/cli/mcp-server-wrapper.js` (compiled from `src/cli/mcp-server-wrapper.ts`); logs stderr separately to prevent protocol corruption
 - All CLI logic now in TypeScript under `src/cli/` and compiles to `dist/cli/`. The `cli/` directory holds only thin extension-less spawn shims pinned by package.json `bin` entries.
@@ -79,7 +79,7 @@ test/
 ### Path Resolution
 - **Claude config**: `~/.claude` (or `CLAUDE_CONFIG_DIR`); checks `projects/` + `transcripts/` subdirs
 - **Superpowers dir**: `~/.config/superpowers` (or `XDG_CONFIG_HOME/superpowers`, `PERSONAL_SUPERPOWERS_DIR`, `EPISODIC_MEMORY_CONFIG_DIR`)
-- **Archive**: `~/.config/superpowers/conversation-archive/` (raw .jsonl copies)
+- **Archive**: `~/.config/superpowers/conversation-archive/` (distilled .jsonl copies, see `src/archive-distill.ts`)
 - **Index**: `~/.config/superpowers/conversation-index/` (SQLite db + exclude.txt config)
 - **Database**: `~/.config/superpowers/conversation-index/db.sqlite`
 
