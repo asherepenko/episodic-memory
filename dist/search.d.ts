@@ -1,4 +1,4 @@
-import { SearchResult, MultiConceptResult } from './types.js';
+import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
 export interface SearchOptions {
     limit?: number;
     mode?: 'vector' | 'text' | 'both';
@@ -11,6 +11,8 @@ export interface SearchOptions {
     minScore?: number;
     /** rerank a larger candidate pool with a cross-encoder; undefined → EPISODIC_MEMORY_RERANK env */
     rerank?: boolean;
+    /** one result per conversation (its best-ranked exchange); default true */
+    collapse?: boolean;
 }
 /**
  * Convert an L2 (Euclidean) distance from sqlite-vec into a cosine similarity.
@@ -39,6 +41,17 @@ export declare function reciprocalRankFusionScored<T extends {
     row: T;
     score: number;
 }>;
+/**
+ * Turn a free-text query into an FTS5 MATCH expression: word tokens (letters,
+ * digits, `_`), lower-cased, stop words dropped, each quoted so FTS syntax in
+ * the query is inert, OR-joined so BM25 ranks partial matches. null when
+ * nothing searchable is left.
+ */
+export declare function buildLexicalQuery(query: string): string | null;
+/** Keep the first (best-ranked) result of each conversation, in order. */
+export declare function collapseBySession<T extends {
+    exchange: ConversationExchange;
+}>(results: T[]): T[];
 export declare function searchConversations(query: string, options?: SearchOptions): Promise<SearchResult[]>;
 /**
  * When a search returns nothing, distinguish "index still building" from a

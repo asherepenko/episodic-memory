@@ -12,6 +12,7 @@ let gitBranch;
 let limit = 10;
 let minScore;
 let rerank;
+let allExchanges = false;
 const queries = [];
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -35,6 +36,7 @@ OPTIONS:
   --limit N             Max results (default: 10)
   --min-score N         Drop semantic matches below cosine similarity N (0-1)
   --rerank              Rerank results with a cross-encoder for higher precision
+  --all-exchanges       Show every matching exchange, not one per conversation
   --help, -h            Show this help
 
 EXAMPLES:
@@ -92,6 +94,9 @@ EXAMPLES:
     }
     else if (arg === '--rerank') {
         rerank = true;
+    }
+    else if (arg === '--all-exchanges') {
+        allExchanges = true;
     }
     else {
         // All non-flag args are query terms
@@ -170,6 +175,7 @@ else {
         git_branch: gitBranch,
         minScore,
         rerank,
+        collapse: !allExchanges,
     };
     const run = useUi
         ? ui.task('searching...', () => searchConversations(queries[0], options)).then(async (results) => {
