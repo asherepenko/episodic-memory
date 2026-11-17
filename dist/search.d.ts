@@ -7,7 +7,7 @@ export interface SearchOptions {
     project?: string;
     session_id?: string;
     git_branch?: string;
-    /** drop vector matches below this cosine similarity (0-1); text-only matches are kept */
+    /** drop matches below this cosine similarity (0-1); text mode has none, so it is unaffected */
     minScore?: number;
     /** rerank a larger candidate pool with a cross-encoder; undefined → EPISODIC_MEMORY_RERANK env */
     rerank?: boolean;
@@ -48,6 +48,11 @@ export declare function reciprocalRankFusionScored<T extends {
  * nothing searchable is left.
  */
 export declare function buildLexicalQuery(query: string): string | null;
+/** A result with a known similarity must reach `minScore`; one without (text mode) passes. */
+export declare function passesMinScore(r: {
+    similarity?: number;
+    textOnly?: boolean;
+}, minScore: number): boolean;
 /** Keep the first (best-ranked) result of each conversation, in order. */
 export declare function collapseBySession<T extends {
     exchange: ConversationExchange;

@@ -7433,7 +7433,8 @@ function ensureLexicalIndex(db) {
   const exists = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exchanges_fts'"
   ).get();
-  db.exec(`
+  db.transaction(() => {
+    db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
       user_message, assistant_message,
       content='exchanges', content_rowid='rowid',
@@ -7454,10 +7455,11 @@ function ensureLexicalIndex(db) {
       VALUES (new.rowid, new.user_message, new.assistant_message);
     END;
   `);
-  if (!exists) {
-    console.log("Building lexical search index...");
-    db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`);
-  }
+    if (!exists) {
+      console.log("Building lexical search index...");
+      db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`);
+    }
+  })();
 }
 function ensureIndexedFilesTable(db) {
   const exists = db.prepare(
@@ -26240,6 +26242,9 @@ function buildLexicalQuery(query) {
   const unique = [...new Set(tokens)];
   return unique.length ? unique.map((t) => `"${t}"`).join(" OR ") : null;
 }
+function passesMinScore(r, minScore) {
+  return r.similarity === void 0 || r.similarity >= minScore;
+}
 function collapseBySession(results) {
   const seen = /* @__PURE__ */ new Set();
   return results.filter((r) => {
@@ -26340,7 +26345,7 @@ async function searchConversations(query, options = {}) {
   });
   let out = mapped;
   if (options.minScore !== void 0) {
-    out = out.filter((r) => r.textOnly || r.similarity === void 0 || r.similarity >= options.minScore);
+    out = out.filter((r) => passesMinScore(r, options.minScore));
   }
   if (rerankOn && out.length > 1) {
     const passages = out.map((r) => `User: ${r.exchange.userMessage}
@@ -28174,7 +28179,7 @@ var SearchInputSchema = external_exports.object({
     "Search query - string for single concept, array of strings for multi-concept AND search"
   ),
   mode: SearchModeEnum.default("both").describe(
-    'Search mode: "vector" for semantic similarity, "text" for exact matching, "both" for combined (default: "both"). Only used for single-concept searches.'
+    'Search mode: "vector" for semantic similarity, "text" for keyword (BM25) matching, "both" for combined (default: "both"). Only used for single-concept searches.'
   ),
   limit: external_exports.number().int().min(1).max(50).default(10).describe("Maximum number of results to return (default: 10)"),
   after: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format").optional().describe("Only return conversations after this date (YYYY-MM-DD format)"),
@@ -28182,7 +28187,7 @@ var SearchInputSchema = external_exports.object({
   project: external_exports.string().min(1).optional().describe("Filter by project name (exact match)"),
   session_id: external_exports.string().min(1).optional().describe("Filter by session ID (exact match)"),
   git_branch: external_exports.string().min(1).optional().describe("Filter by git branch name (exact match)"),
-  min_score: external_exports.number().min(0).max(1).optional().describe("Drop semantic matches below this cosine similarity (0-1). Raises precision; text-only matches are always kept."),
+  min_score: external_exports.number().min(0).max(1).optional().describe("Drop semantic matches below this cosine similarity (0-1). Raises precision; ignored in text mode, which has no similarity."),
   rerank: external_exports.boolean().optional().describe("Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a reranker model on first use). Defaults to the EPISODIC_MEMORY_RERANK env switch."),
   all_exchanges: external_exports.boolean().optional().describe("Return every matching exchange instead of one per conversation (default: false). Single-concept searches only."),
   response_format: ResponseFormatEnum.default("markdown").describe(
@@ -28233,7 +28238,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             project: { type: "string", minLength: 1, description: "Filter by project name (exact match)" },
             session_id: { type: "string", minLength: 1, description: "Filter by session ID (exact match)" },
             git_branch: { type: "string", minLength: 1, description: "Filter by git branch name (exact match)" },
-            min_score: { type: "number", minimum: 0, maximum: 1, description: "Drop semantic matches below this cosine similarity (0-1); text-only matches are kept" },
+            min_score: { type: "number", minimum: 0, maximum: 1, description: "Drop semantic matches below this cosine similarity (0-1); ignored in text mode" },
             rerank: { type: "boolean", description: "Rerank a larger candidate pool with a cross-encoder for higher precision (slower; downloads a model on first use)" },
             all_exchanges: { type: "boolean", description: "Return every matching exchange instead of one per conversation (default: false)" },
             response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" }

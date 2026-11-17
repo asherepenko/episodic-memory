@@ -157,6 +157,10 @@ export function buildLexicalQuery(query) {
     const unique = [...new Set(tokens)];
     return unique.length ? unique.map(t => `"${t}"`).join(' OR ') : null;
 }
+/** A result with a known similarity must reach `minScore`; one without (text mode) passes. */
+export function passesMinScore(r, minScore) {
+    return r.similarity === undefined || r.similarity >= minScore;
+}
 /** Keep the first (best-ranked) result of each conversation, in order. */
 export function collapseBySession(results) {
     const seen = new Set();
@@ -279,11 +283,11 @@ export async function searchConversations(query, options = {}) {
     // Hybrid results keep the fused (RRF) order: an exchange both channels
     // agree on outranks one only the vector liked. The shown similarity stays
     // the real cosine, so it is not monotonic down the list.
-    // Drop weak vector matches below the threshold. Text-only matches are kept
-    // whatever their similarity — a substring hit is an exact signal.
+    // Drop weak matches below the threshold. Keyword-only hybrid hits carry a
+    // back-filled cosine and are held to the same bar; text mode has no score.
     let out = mapped;
     if (options.minScore !== undefined) {
-        out = out.filter(r => r.textOnly || r.similarity === undefined || r.similarity >= options.minScore);
+        out = out.filter(r => passesMinScore(r, options.minScore));
     }
     // Optional cross-encoder rerank over the larger retrieved pool, then keep the
     // top `limit`. Reorders by joint query/passage relevance; the displayed

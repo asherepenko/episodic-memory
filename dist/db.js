@@ -219,7 +219,10 @@ export function initDatabase() {
  */
 export function ensureLexicalIndex(db) {
     const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exchanges_fts'").get();
-    db.exec(`
+    // One transaction: a first open killed mid-build must not leave an empty
+    // table that the exists check would then never rebuild.
+    db.transaction(() => {
+        db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
       user_message, assistant_message,
       content='exchanges', content_rowid='rowid',
@@ -240,10 +243,11 @@ export function ensureLexicalIndex(db) {
       VALUES (new.rowid, new.user_message, new.assistant_message);
     END;
   `);
-    if (!exists) {
-        console.log('Building lexical search index...');
-        db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`);
-    }
+        if (!exists) {
+            console.log('Building lexical search index...');
+            db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`);
+        }
+    })();
 }
 /**
  * One row per archived transcript that indexing has finished with, including
