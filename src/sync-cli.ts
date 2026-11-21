@@ -1,6 +1,7 @@
 import { getConversationSourceDirs } from './paths.js';
 import { closeLog } from './logger.js';
 import { shouldSkipReentrantSync } from './summarizer.js';
+import { isAutoSyncDisabled } from './env-switches.js';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import { formatLogLine, getSyncLogPath } from './logging.js';
@@ -21,9 +22,16 @@ if (shouldSkipReentrantSync()) {
   process.exit(0);
 }
 
+// Auto-sync switch: only the automatic hook path (`--background`) is disabled;
+// a manual foreground `sync` still runs.
+if (args.includes('--background') && isAutoSyncDisabled()) {
+  console.error('episodic-memory: background sync disabled by EPISODIC_MEMORY_DISABLE_AUTO_SYNC');
+  process.exit(0);
+}
+
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
-Usage: episodic-memory sync [--background] [--limit <n>]
+Usage: episodic-memory sync [--background] [--limit <n>] [--no-summaries]
 
 Sync conversations from Claude Code and Codex transcript directories to archive and index them.
 
@@ -37,11 +45,16 @@ Safe to run multiple times - subsequent runs are fast no-ops.
 
 OPTIONS:
   --background        Run sync in background (for hooks, returns immediately)
+  --no-summaries      Copy and index only; skip the summary pass (no Claude SDK calls)
   --limit <n>         Max summaries to generate per run, newest first (default: 50)
   --concurrency <n>   Parallel summary workers, 1-16 (overrides
   -c <n>              EPISODIC_MEMORY_CONCURRENCY; default: 2)
 
 ENV:
+  EPISODIC_MEMORY_DISABLE_AUTO_SYNC Set to 1/true/yes to make "sync --background" (the hook
+                                    path) exit without syncing; manual "sync" still runs
+  EPISODIC_MEMORY_SKIP_SUMMARIES    Set to 1/true/yes to skip the summary pass (same as --no-summaries)
+  EPISODIC_MEMORY_BUSY_TIMEOUT_MS   SQLite busy timeout in ms (default: 5000)
   EPISODIC_MEMORY_API_TIMEOUT_MS    Per-call Claude SDK timeout (default: 180000)
   EPISODIC_MEMORY_CONCURRENCY       Parallel summary workers (default: 2; --concurrency wins)
   EPISODIC_MEMORY_SUMMARY_BUDGET_SEC  Stop starting new summaries after this many
@@ -88,6 +101,9 @@ const isBackground = args.includes('--background');
 const limitIdx = args.indexOf('--limit');
 const limitRaw = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : NaN;
 const summaryLimit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : DEFAULT_SUMMARY_LIMIT;
+
+// --no-summaries: copy and index only. Survives the --background fork like the other flags.
+const noSummaries = args.includes('--no-summaries');
 
 // Parse --concurrency <n> / -c <n> (1-16). Overrides EPISODIC_MEMORY_CONCURRENCY.
 // Survives the --background fork: filteredArgs strips only --background, so the
@@ -152,7 +168,7 @@ if (!lock.ok) {
 const MAX_RERUNS = 3;
 
 async function syncWithReruns(): Promise<void> {
-  await runSync({ summaryLimit, concurrency });
+  await runSync({ summaryLimit, concurrency, skipSummaries: noSummaries });
   for (let i = 0; i < MAX_RERUNS && takeRerunRequest(); i++) {
     console.log('\nAnother sync was requested while this one ran — syncing again');
     await runSync({ skipSummaries: true });

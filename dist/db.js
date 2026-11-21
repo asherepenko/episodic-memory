@@ -5,6 +5,7 @@ import * as sqliteVec from 'sqlite-vec';
 import { getDbPath } from './paths.js';
 import { EMBEDDING_VERSION } from './embeddings.js';
 import { isNativeBindingError, healNativeBinding } from './native-binding.js';
+import { resolveBusyTimeoutMs } from './env-switches.js';
 /**
  * Open the SQLite database, self-healing the better-sqlite3 native binding if
  * it fails to load. A Node upgrade after install changes the ABI and breaks the
@@ -13,6 +14,13 @@ import { isNativeBindingError, healNativeBinding } from './native-binding.js';
  * still-broken binding after the rebuild, propagates with the real error.
  */
 export function openDatabase(dbPath, options) {
+    const db = openRaw(dbPath, options);
+    // Wait for a competing writer instead of failing at once with SQLITE_BUSY
+    // (concurrent hook syncs, MCP server and CLI share one database file).
+    db.pragma(`busy_timeout = ${resolveBusyTimeoutMs()}`);
+    return db;
+}
+function openRaw(dbPath, options) {
     try {
         return new Database(dbPath, options);
     }

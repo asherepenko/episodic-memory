@@ -206,11 +206,16 @@ interface ConversationExchange {
 - `CLAUDE_CONFIG_DIR` — Override default `~/.claude` location
 - `EPISODIC_MEMORY_CONFIG_DIR` — Override default superpowers dir (testing)
 - `EPISODIC_MEMORY_DB_PATH` — Override default DB path (testing)
+- `EPISODIC_MEMORY_MAX_MESSAGE_CHARS` — Per-message cap applied at parse time (default 100000; `0` = no cap; invalid → default). Oversized user/assistant text keeps its first 60% / last 40% of the budget around an `[… N chars omitted by episodic-memory …]` marker; the exchange stays indexed and `show` still points at the full archive lines
+- `EPISODIC_MEMORY_EMBED_THREADS` — Positive integer; ONNX intra-op threads for embeddings (inter-op is always 1). Default `max(1, min(4, floor(cores/2)))` on every platform so embedding never takes every core. Does not change vectors, so no `EMBEDDING_VERSION` bump. If the embedding backend fails to load, search warns once on stderr and falls back to BM25 keyword search for the rest of the process (`EmbeddingUnavailableError`); the next process retries
 - `EPISODIC_MEMORY_API_BASE_URL` — Anthropic API base (for summaries)
 - `EPISODIC_MEMORY_API_MODEL` — Model for summaries (e.g., claude-opus-4-1)
 - `EPISODIC_MEMORY_CONCURRENCY` — Parallel summary workers per sync (default: 2). The `sync --concurrency`/`-c` flag (1–16) overrides it. The SessionStart hook runs a bare `sync --background` and *inherits* this from the session env — it never sets it — so export it in the session environment to tune the background hook; use the flag for a one-off manual catch-up.
 - `EPISODIC_MEMORY_SUMMARY_BUDGET_SEC` — Seconds a sync may keep starting new summaries (default 300; `0` = none). Queue is every indexed conversation (`SELECT DISTINCT archive_path FROM exchanges`) whose sync state isn't `complete` — archive-only and subagent files included — newest-first, capped by `--limit` (default 50). `index` ignores both
 - `EPISODIC_MEMORY_SUMMARIZER_GUARD` — Set to `1` by `getApiEnv()` to break recursive Claude SDK spawn loops; sync-cli silently exits when seen
+- `EPISODIC_MEMORY_BUSY_TIMEOUT_MS` — SQLite `busy_timeout` in ms for every DB connection (default 5000; non-negative integer, invalid → default)
+- `EPISODIC_MEMORY_DISABLE_AUTO_SYNC` — Truthy (`1`/`true`/`yes`) makes `sync --background` (the hook path) exit 0 without syncing; manual foreground `sync` still runs
+- `EPISODIC_MEMORY_SKIP_SUMMARIES` — Truthy skips the summary pass (copy + index still run); same as `sync --no-summaries`
 - `ANTHROPIC_API_KEY` — For API calls
 - `TEST_DB_PATH`, `TEST_ARCHIVE_DIR`, `TEST_PROJECTS_DIR` — Test overrides
 - `CONVERSATION_SEARCH_EXCLUDE_PROJECTS` — Comma-separated list of projects to exclude

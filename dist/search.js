@@ -1,5 +1,5 @@
 import { initDatabase } from './db.js';
-import { initEmbeddings, generateQueryEmbedding, EMBEDDER } from './embeddings.js';
+import { initEmbeddings, generateQueryEmbedding, EMBEDDER, EmbeddingUnavailableError } from './embeddings.js';
 import { rerankScores, isRerankEnabled } from './reranker.js';
 import fs from 'fs';
 import readline from 'readline';
@@ -176,8 +176,39 @@ export function collapseBySession(results) {
 function sigmoid(x) {
     return 1 / (1 + Math.exp(-x));
 }
+// Per-process memory of an embedding-backend failure: the load is attempted at
+// most once, concurrent callers share that attempt, and a later process retries.
+let embeddingAttempt = null;
+let embeddingFailure = null;
+function recordEmbeddingFailure(err) {
+    if (embeddingFailure)
+        return;
+    embeddingFailure = err instanceof EmbeddingUnavailableError ? err : new EmbeddingUnavailableError(err);
+    console.error(`episodic-memory: semantic search unavailable (${embeddingFailure.message}); ` +
+        'falling back to keyword (BM25) search.');
+}
+/** Embed a query, or return undefined (after one warning) when the backend is unavailable. */
+async function embedQuery(query) {
+    embeddingAttempt ??= initEmbeddings().catch(recordEmbeddingFailure);
+    await embeddingAttempt;
+    if (embeddingFailure)
+        return undefined;
+    try {
+        return await generateQueryEmbedding(query);
+    }
+    catch (err) {
+        recordEmbeddingFailure(err);
+        return undefined;
+    }
+}
+const FALLBACK_NOTE = 'Note: semantic search is unavailable (embedding model failed to load); results are from keyword (BM25) search only.';
+/** One-line note for output when this process fell back to keyword search. */
+export function embeddingFallbackNote() {
+    return embeddingFailure ? FALLBACK_NOTE : undefined;
+}
 export async function searchConversations(query, options = {}) {
-    const { limit = 10, mode = 'both', after, before } = options;
+    const { limit = 10, after, before } = options;
+    let mode = options.mode ?? 'both';
     const rerankOn = isRerankEnabled(options.rerank);
     // When reranking, retrieve a larger pool to rerank, then keep the top `limit`.
     const collapse = options.collapse ?? true;
@@ -189,6 +220,12 @@ export async function searchConversations(query, options = {}) {
         validateISODate(after, '--after');
     if (before)
         validateISODate(before, '--before');
+    let queryEmbedding;
+    if (mode === 'vector' || mode === 'both') {
+        queryEmbedding = await embedQuery(query);
+        if (!queryEmbedding)
+            mode = 'text';
+    }
     const db = initDatabase();
     let results = [];
     let queryVector;
@@ -197,8 +234,6 @@ export async function searchConversations(query, options = {}) {
         // Vector similarity search.
         // vec0 applies KNN before WHERE, so when extra metadata filters are
         // active we ask for more candidates than `limit` and trim afterwards.
-        await initEmbeddings();
-        const queryEmbedding = await generateQueryEmbedding(query);
         queryVector = Buffer.from(new Float32Array(queryEmbedding).buffer);
         const k = hasMetadataFilters(options) ? retrieveLimit * 3 : retrieveLimit;
         const stmt = db.prepare(`
@@ -379,10 +414,13 @@ export async function buildEmptyResultHint() {
     return undefined;
 }
 export async function formatResults(results) {
+    const note = embeddingFallbackNote();
     if (results.length === 0) {
-        return 'No results found.';
+        return note ? `No results found.\n\n${note}` : 'No results found.';
     }
     let output = `Found ${results.length} relevant conversation${results.length > 1 ? 's' : ''}:\n\n`;
+    if (note)
+        output += `${note}\n\n`;
     const meta = makeFileMetaCache();
     // Process results sequentially to get file metadata
     for (let index = 0; index < results.length; index++) {
@@ -470,10 +508,14 @@ export async function searchMultipleConcepts(concepts, options = {}) {
     return multiConceptResults.slice(0, limit);
 }
 export async function formatMultiConceptResults(results, concepts) {
+    const note = embeddingFallbackNote();
     if (results.length === 0) {
-        return `No conversations found matching all concepts: ${concepts.join(', ')}`;
+        const none = `No conversations found matching all concepts: ${concepts.join(', ')}`;
+        return note ? `${none}\n\n${note}` : none;
     }
     let output = `Found ${results.length} conversation${results.length > 1 ? 's' : ''} matching all concepts [${concepts.join(' + ')}]:\n\n`;
+    if (note)
+        output += `${note}\n\n`;
     const meta = makeFileMetaCache();
     // Process results sequentially to get file metadata
     for (let index = 0; index < results.length; index++) {

@@ -4,6 +4,7 @@ import { SUMMARIZER_CONTEXT_MARKER } from '../constants.js';
 import { copyDistilled } from '../archive-distill.js';
 import { getExcludedProjects, findJsonlFiles, entryIsDirectory } from '../paths.js';
 import { log } from '../logger.js';
+import { areSummariesSkipped } from '../env-switches.js';
 import {
   openConversationSyncStateStore,
   isRetriable,
@@ -283,6 +284,7 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
   const result: SyncResult = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [] };
   const store = openConversationSyncStateStore();
   const emit = options.onEvent ?? (() => {});
+  const skipSummaries = options.skipSummaries === true || areSummariesSkipped();
   const excludedDirSet = new Set(getExcludedProjects());
   const indexer = createArchiveIndexer(excludedDirSet);
   const filesToSummarize: Array<{ path: string; state: SyncState }> = [];
@@ -333,7 +335,7 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
           }
 
           // Check if this file needs a summary (whether newly copied or existing)
-          if (!options.skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
+          if (!skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
             filesToSummarize.push({ path: destFile, state });
           }
         } catch (error) {
@@ -356,7 +358,7 @@ export function createSyncSession(destDir: string, options: SyncOptions = {}): S
     },
 
     async summarize() {
-      if (options.skipSummaries) return;
+      if (skipSummaries) return;
       // Plus every indexed conversation still unsummarized — archive-only
       // projects and subagent files never pass through syncProject's queue.
       try {

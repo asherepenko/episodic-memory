@@ -4,6 +4,7 @@ import { SUMMARIZER_CONTEXT_MARKER } from '../constants.js';
 import { copyDistilled } from '../archive-distill.js';
 import { getExcludedProjects, findJsonlFiles, entryIsDirectory } from '../paths.js';
 import { log } from '../logger.js';
+import { areSummariesSkipped } from '../env-switches.js';
 import { openConversationSyncStateStore, isRetriable, MAX_ATTEMPTS, } from './conversation-sync-state.js';
 const EXCLUSION_MARKERS = [
     '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
@@ -197,6 +198,7 @@ export function createSyncSession(destDir, options = {}) {
     const result = { copied: 0, skipped: 0, indexed: 0, summarized: 0, errors: [] };
     const store = openConversationSyncStateStore();
     const emit = options.onEvent ?? (() => { });
+    const skipSummaries = options.skipSummaries === true || areSummariesSkipped();
     const excludedDirSet = new Set(getExcludedProjects());
     const indexer = createArchiveIndexer(excludedDirSet);
     const filesToSummarize = [];
@@ -245,7 +247,7 @@ export function createSyncSession(destDir, options = {}) {
                         state = store.load(destFile);
                     }
                     // Check if this file needs a summary (whether newly copied or existing)
-                    if (!options.skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
+                    if (!skipSummaries && state.kind !== 'complete' && !shouldSkipConversation(destFile)) {
                         filesToSummarize.push({ path: destFile, state });
                     }
                 }
@@ -266,7 +268,7 @@ export function createSyncSession(destDir, options = {}) {
             return outcome;
         },
         async summarize() {
-            if (options.skipSummaries)
+            if (skipSummaries)
                 return;
             // Plus every indexed conversation still unsummarized — archive-only
             // projects and subagent files never pass through syncProject's queue.

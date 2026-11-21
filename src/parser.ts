@@ -3,6 +3,30 @@ import readline from 'readline';
 import path from 'path';
 import { ConversationExchange, ConversationHarness, ToolCall } from './types.js';
 import crypto from 'crypto';
+import { DEFAULT_MAX_MESSAGE_CHARS } from './constants.js';
+
+export function resolveMaxMessageChars(raw: string | undefined = process.env.EPISODIC_MEMORY_MAX_MESSAGE_CHARS): number {
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return DEFAULT_MAX_MESSAGE_CHARS;
+  const n = Number(raw.trim());
+  return Number.isSafeInteger(n) ? n : DEFAULT_MAX_MESSAGE_CHARS;
+}
+
+/**
+ * Bound a message to roughly `max` chars: keep the first 60% and last 40% of the
+ * budget around an omission marker. `max <= 0` disables the cap. Never splits a
+ * surrogate pair.
+ */
+export function capMessageText(text: string, max: number = resolveMaxMessageChars()): string {
+  if (max <= 0 || text.length <= max) return text;
+  let headEnd = Math.floor(max * 0.6);
+  let tailStart = text.length - (max - headEnd);
+  const isHigh = (i: number) => { const c = text.charCodeAt(i); return c >= 0xd800 && c <= 0xdbff; };
+  const isLow = (i: number) => { const c = text.charCodeAt(i); return c >= 0xdc00 && c <= 0xdfff; };
+  if (headEnd > 0 && isHigh(headEnd - 1)) headEnd--;
+  if (tailStart < text.length && isLow(tailStart)) tailStart++;
+  const omitted = tailStart - headEnd;
+  return `${text.slice(0, headEnd)}\n[… ${omitted} chars omitted by episodic-memory …]\n${text.slice(tailStart)}`;
+}
 
 interface JSONLMessage {
   type: string;
@@ -129,8 +153,8 @@ async function parseClaudeConversation(
         id: exchangeId,
         project: currentExchange.project,
         timestamp: currentExchange.timestamp,
-        userMessage: currentExchange.userMessage,
-        assistantMessage: currentExchange.assistantMessages.join('\n\n'),
+        userMessage: capMessageText(currentExchange.userMessage),
+        assistantMessage: capMessageText(currentExchange.assistantMessages.join('\n\n')),
         archivePath,
         lineStart: currentExchange.userLine,
         lineEnd: currentExchange.lastAssistantLine,
@@ -380,8 +404,8 @@ async function parseCodexConversation(
         id: exchangeId,
         project: currentExchange.project,
         timestamp: currentExchange.timestamp,
-        userMessage: currentExchange.userMessage,
-        assistantMessage: currentExchange.assistantMessages.join('\n\n'),
+        userMessage: capMessageText(currentExchange.userMessage),
+        assistantMessage: capMessageText(currentExchange.assistantMessages.join('\n\n')),
         archivePath,
         lineStart: currentExchange.userLine,
         lineEnd: currentExchange.lastAssistantLine,

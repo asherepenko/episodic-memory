@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { initDatabase } from './db.js';
-import { initEmbeddings, generateQueryEmbedding, EMBEDDER } from './embeddings.js';
+import { initEmbeddings, generateQueryEmbedding, EMBEDDER, EmbeddingUnavailableError } from './embeddings.js';
 import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
 import { rerankScores, isRerankEnabled } from './reranker.js';
 import fs from 'fs';
@@ -216,11 +216,47 @@ function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
 
+// Per-process memory of an embedding-backend failure: the load is attempted at
+// most once, concurrent callers share that attempt, and a later process retries.
+let embeddingAttempt: Promise<void> | null = null;
+let embeddingFailure: EmbeddingUnavailableError | null = null;
+
+function recordEmbeddingFailure(err: unknown): void {
+  if (embeddingFailure) return;
+  embeddingFailure = err instanceof EmbeddingUnavailableError ? err : new EmbeddingUnavailableError(err);
+  console.error(
+    `episodic-memory: semantic search unavailable (${embeddingFailure.message}); ` +
+    'falling back to keyword (BM25) search.'
+  );
+}
+
+/** Embed a query, or return undefined (after one warning) when the backend is unavailable. */
+async function embedQuery(query: string): Promise<number[] | undefined> {
+  embeddingAttempt ??= initEmbeddings().catch(recordEmbeddingFailure);
+  await embeddingAttempt;
+  if (embeddingFailure) return undefined;
+  try {
+    return await generateQueryEmbedding(query);
+  } catch (err) {
+    recordEmbeddingFailure(err);
+    return undefined;
+  }
+}
+
+const FALLBACK_NOTE =
+  'Note: semantic search is unavailable (embedding model failed to load); results are from keyword (BM25) search only.';
+
+/** One-line note for output when this process fell back to keyword search. */
+export function embeddingFallbackNote(): string | undefined {
+  return embeddingFailure ? FALLBACK_NOTE : undefined;
+}
+
 export async function searchConversations(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  const { limit = 10, mode = 'both', after, before } = options;
+  const { limit = 10, after, before } = options;
+  let mode = options.mode ?? 'both';
   const rerankOn = isRerankEnabled(options.rerank);
   // When reranking, retrieve a larger pool to rerank, then keep the top `limit`.
   const collapse = options.collapse ?? true;
@@ -231,6 +267,12 @@ export async function searchConversations(
   // Validate date parameters
   if (after) validateISODate(after, '--after');
   if (before) validateISODate(before, '--before');
+
+  let queryEmbedding: number[] | undefined;
+  if (mode === 'vector' || mode === 'both') {
+    queryEmbedding = await embedQuery(query);
+    if (!queryEmbedding) mode = 'text';
+  }
 
   const db = initDatabase();
 
@@ -243,9 +285,7 @@ export async function searchConversations(
     // Vector similarity search.
     // vec0 applies KNN before WHERE, so when extra metadata filters are
     // active we ask for more candidates than `limit` and trim afterwards.
-    await initEmbeddings();
-    const queryEmbedding = await generateQueryEmbedding(query);
-    queryVector = Buffer.from(new Float32Array(queryEmbedding).buffer);
+    queryVector = Buffer.from(new Float32Array(queryEmbedding!).buffer);
     const k = hasMetadataFilters(options) ? retrieveLimit * 3 : retrieveLimit;
 
     const stmt = db.prepare(`
@@ -441,11 +481,13 @@ export async function buildEmptyResultHint(): Promise<string | undefined> {
 }
 
 export async function formatResults(results: Array<SearchResult & { summary?: string }>): Promise<string> {
+  const note = embeddingFallbackNote();
   if (results.length === 0) {
-    return 'No results found.';
+    return note ? `No results found.\n\n${note}` : 'No results found.';
   }
 
   let output = `Found ${results.length} relevant conversation${results.length > 1 ? 's' : ''}:\n\n`;
+  if (note) output += `${note}\n\n`;
   const meta = makeFileMetaCache();
 
   // Process results sequentially to get file metadata
@@ -561,11 +603,14 @@ export async function formatMultiConceptResults(
   results: MultiConceptResult[],
   concepts: string[]
 ): Promise<string> {
+  const note = embeddingFallbackNote();
   if (results.length === 0) {
-    return `No conversations found matching all concepts: ${concepts.join(', ')}`;
+    const none = `No conversations found matching all concepts: ${concepts.join(', ')}`;
+    return note ? `${none}\n\n${note}` : none;
   }
 
   let output = `Found ${results.length} conversation${results.length > 1 ? 's' : ''} matching all concepts [${concepts.join(' + ')}]:\n\n`;
+  if (note) output += `${note}\n\n`;
   const meta = makeFileMetaCache();
 
   // Process results sequentially to get file metadata

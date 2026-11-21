@@ -42,6 +42,22 @@ export declare function resolveEmbeddingModel(requestedKey: string | undefined):
  * changes this, marking old rows stale and triggering re-embedding on upgrade.
  */
 export declare const EMBEDDING_VERSION: number;
+/**
+ * Thrown when the embedding model or its native backend cannot be loaded
+ * (onnxruntime missing, model download failed offline, ...). `message` carries
+ * the root cause so callers can log it without unwrapping `cause`.
+ */
+export declare class EmbeddingUnavailableError extends Error {
+    constructor(cause: unknown);
+}
+/**
+ * Intra-op thread count for the ONNX session. Default is half the cores,
+ * clamped to 1..4, so embedding never grabs every core. A positive integer in
+ * EPISODIC_MEMORY_EMBED_THREADS overrides it (and may exceed the cap).
+ * Thread count does not change embedding output, so it is not part of the
+ * embedding version.
+ */
+export declare function resolveEmbedThreads(env: Record<string, string | undefined>, cores: number): number;
 export declare function initEmbeddings(): Promise<void>;
 export declare function generateEmbedding(text: string): Promise<number[]>;
 /**

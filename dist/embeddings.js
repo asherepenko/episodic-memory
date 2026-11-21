@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { getTransformersCacheDir, loadTransformers } from './transformers-runtime.js';
 export const BGE_QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
 export const EMBEDDING_MODELS = {
@@ -54,13 +55,45 @@ const MODEL_DTYPE = ACTIVE_MODEL.dtype;
  * changes this, marking old rows stale and triggering re-embedding on upgrade.
  */
 export const EMBEDDING_VERSION = ACTIVE_MODEL.version;
+/**
+ * Thrown when the embedding model or its native backend cannot be loaded
+ * (onnxruntime missing, model download failed offline, ...). `message` carries
+ * the root cause so callers can log it without unwrapping `cause`.
+ */
+export class EmbeddingUnavailableError extends Error {
+    constructor(cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        super(`Embedding model unavailable: ${detail}`, { cause });
+        this.name = 'EmbeddingUnavailableError';
+    }
+}
+const MAX_DEFAULT_EMBED_THREADS = 4;
+/**
+ * Intra-op thread count for the ONNX session. Default is half the cores,
+ * clamped to 1..4, so embedding never grabs every core. A positive integer in
+ * EPISODIC_MEMORY_EMBED_THREADS overrides it (and may exceed the cap).
+ * Thread count does not change embedding output, so it is not part of the
+ * embedding version.
+ */
+export function resolveEmbedThreads(env, cores) {
+    const raw = env.EPISODIC_MEMORY_EMBED_THREADS;
+    if (raw !== undefined && /^\d+$/.test(raw.trim())) {
+        const n = Number(raw.trim());
+        if (n >= 1)
+            return n;
+    }
+    const available = Number.isFinite(cores) ? Math.floor(cores) : 1;
+    return Math.max(1, Math.min(MAX_DEFAULT_EMBED_THREADS, Math.floor(available / 2)));
+}
 let embeddingPipeline = null;
 // transformers.js 3 exposes `pipeline` through a deeply-distributive generic
 // overload. TypeScript 7 exceeds its union-complexity limit when contextual
 // typing the known feature-extraction call below, so keep the public runtime
 // contract at this narrow boundary instead.
 export async function initEmbeddings() {
-    if (!embeddingPipeline) {
+    if (embeddingPipeline)
+        return;
+    try {
         console.error('Loading embedding model (first run may take time)...');
         const { pipeline, env } = await loadTransformers();
         // Keep model files outside node_modules, and isolate transformer major
@@ -69,8 +102,20 @@ export async function initEmbeddings() {
         env.useBrowserCache = false;
         env.cacheDir = getTransformersCacheDir();
         const createFeatureExtractionPipeline = pipeline;
-        embeddingPipeline = await createFeatureExtractionPipeline('feature-extraction', MODEL_ID, { dtype: MODEL_DTYPE, progress_callback: () => { } });
+        embeddingPipeline = await createFeatureExtractionPipeline('feature-extraction', MODEL_ID, {
+            dtype: MODEL_DTYPE,
+            progress_callback: () => { },
+            // Passed through to onnxruntime InferenceSession.create (pipelines.js
+            // `session_options` -> models/session.js -> backends/onnx.js).
+            session_options: {
+                intraOpNumThreads: resolveEmbedThreads(process.env, os.availableParallelism()),
+                interOpNumThreads: 1,
+            },
+        });
         console.error('Embedding model loaded');
+    }
+    catch (err) {
+        throw err instanceof EmbeddingUnavailableError ? err : new EmbeddingUnavailableError(err);
     }
 }
 export async function generateEmbedding(text) {

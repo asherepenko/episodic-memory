@@ -56,6 +56,8 @@ export declare function passesMinScore(r: {
 export declare function collapseBySession<T extends {
     exchange: ConversationExchange;
 }>(results: T[]): T[];
+/** One-line note for output when this process fell back to keyword search. */
+export declare function embeddingFallbackNote(): string | undefined;
 export declare function searchConversations(query: string, options?: SearchOptions): Promise<SearchResult[]>;
 /**
  * When a search returns nothing, distinguish "index still building" from a
