@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] - 2026-11-21
+
+### Fixed
+- **Search no longer fails when the reranker can't load.** With reranking on, a reranker model that won't download or load now gives one warning, and search keeps its normal ranking instead of erroring.
+- **Tests stay off your real Codex history.** The test suite now points `CODEX_HOME` at an empty temp folder, so it never reads `~/.codex`.
+
 ## [1.13.0] - 2026-11-21
 
 ### Added
