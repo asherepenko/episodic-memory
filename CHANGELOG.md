@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-11-21
+
+### Added
+- **Turn off automatic sync.** Set `EPISODIC_MEMORY_DISABLE_AUTO_SYNC=1` and the session hooks stop running `sync --background`. Running `sync` yourself still works.
+- **Index without summaries.** `sync --no-summaries`, or `EPISODIC_MEMORY_SKIP_SUMMARIES=1`, copies and indexes conversations but makes no Claude calls.
+
+### Changed
+- **Embedding no longer takes every CPU core.** It uses half your cores, up to 4. Set `EPISODIC_MEMORY_EMBED_THREADS` to choose another number. Search results do not change.
+- **Huge messages stay small in the index.** A message over 100,000 characters, such as a pasted log, is stored as its first 60,000 and last 40,000 characters with a note of how much was cut. It is still searchable, and the full text stays in the archive. Change the limit with `EPISODIC_MEMORY_MAX_MESSAGE_CHARS` (`0` turns it off).
+
+### Fixed
+- **No more "database is locked" when two syncs overlap.** SQLite now waits up to 5 seconds for a lock (`EPISODIC_MEMORY_BUSY_TIMEOUT_MS`).
+- **Search works when the embedding model can't load.** It warns once and falls back to keyword (BM25) search, and the results say so.
+
 ## [1.12.0] - 2026-11-17
 
 ### Changed
