@@ -28,6 +28,21 @@ const COLLAPSE_FANOUT = 3;
 /** Candidate pool size when reranking: retrieve more, rerank, keep top `limit`. */
 const RERANK_POOL = 50;
 
+let rerankUnavailable = false;
+
+/** Rerank scores, or null when the cross-encoder can't load (fused order is kept). */
+async function tryRerank(query: string, passages: string[]): Promise<number[] | null> {
+  if (rerankUnavailable) return null;
+  try {
+    return await rerankScores(query, passages);
+  } catch (err) {
+    rerankUnavailable = true;
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`episodic-memory: reranker unavailable (${reason}); keeping the fused ranking.`);
+    return null;
+  }
+}
+
 /**
  * Build the AND-clause and bound-parameter list that constrains a search
  * by the optional time and metadata filters. Bound parameters keep us
@@ -393,9 +408,10 @@ export async function searchConversations(
   // Optional cross-encoder rerank over the larger retrieved pool, then keep the
   // top `limit`. Reorders by joint query/passage relevance; the displayed
   // similarity becomes the reranker's relevance (sigmoid of its logit).
-  if (rerankOn && out.length > 1) {
-    const passages = out.map(r => `User: ${r.exchange.userMessage}\n\nAssistant: ${r.exchange.assistantMessage}`);
-    const scores = await rerankScores(query, passages);
+  const scores = rerankOn && out.length > 1
+    ? await tryRerank(query, out.map(r => `User: ${r.exchange.userMessage}\n\nAssistant: ${r.exchange.assistantMessage}`))
+    : null;
+  if (scores) {
     out = out
       .map((r, i) => ({ r, score: scores[i] ?? -Infinity }))
       .sort((a, b) => b.score - a.score)

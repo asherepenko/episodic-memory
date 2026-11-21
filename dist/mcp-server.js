@@ -31815,6 +31815,18 @@ import fs6 from "fs";
 import readline from "readline";
 var COLLAPSE_FANOUT = 3;
 var RERANK_POOL = 50;
+var rerankUnavailable = false;
+async function tryRerank(query, passages) {
+  if (rerankUnavailable) return null;
+  try {
+    return await rerankScores(query, passages);
+  } catch (err) {
+    rerankUnavailable = true;
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`episodic-memory: reranker unavailable (${reason}); keeping the fused ranking.`);
+    return null;
+  }
+}
 function buildSearchFilters(options) {
   const parts = [];
   const params = [];
@@ -32110,11 +32122,10 @@ async function searchConversations(query, options = {}) {
   if (options.minScore !== void 0) {
     out = out.filter((r) => passesMinScore(r, options.minScore));
   }
-  if (rerankOn && out.length > 1) {
-    const passages = out.map((r) => `User: ${r.exchange.userMessage}
+  const scores = rerankOn && out.length > 1 ? await tryRerank(query, out.map((r) => `User: ${r.exchange.userMessage}
 
-Assistant: ${r.exchange.assistantMessage}`);
-    const scores = await rerankScores(query, passages);
+Assistant: ${r.exchange.assistantMessage}`)) : null;
+  if (scores) {
     out = out.map((r, i) => ({ r, score: scores[i] ?? -Infinity })).sort((a, b) => b.score - a.score).map((x2) => ({ ...x2.r, similarity: Number.isFinite(x2.score) ? sigmoid(x2.score) : 0 }));
   }
   if (collapse) out = collapseBySession(out);
